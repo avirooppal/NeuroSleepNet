@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neurosleepnet"
+version = "0.1.0"
+description = "The Memory Layer for AI Agents"
+authors = [
+    { name = "Vibe Coder", email = "vibe@neurosleepnet.ai" }
+]
+dependencies = [
+    "numpy>=1.26.0",
+    "redis>=5.0.0"
+]
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+
+[project.urls]
+Homepage = "https://github.com/neurosleepnet/neurosleepnet"
+
+[tool.setuptools.packages.find]
+include = ["neurosleepnet*"]
