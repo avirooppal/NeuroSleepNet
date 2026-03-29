@@ -55,8 +55,8 @@ class NSNLayer:
         """
         q_emb = self.get_embedding(input_data)
         
-        # 1. Edge-Optimized Hybrid Search
-        memories = self.buffer.sample(3, query=input_data, query_emb=q_emb, strategy="hybrid")
+        # 1. Edge-Optimized Hybrid Search (Increased top_k from 3 to 5)
+        memories = self.buffer.sample(5, query=input_data, query_emb=q_emb, strategy="hybrid")
         
         # 2. Extract Graph Context
         graph_ctx = self.graph_memory.get_context(input_data)
@@ -66,13 +66,13 @@ class NSNLayer:
             
         context_str = ""
         if graph_ctx:
-            context_str += f"Graph Relations: {graph_ctx}\n"
+            context_str += f"- Graph Relations: {graph_ctx}\n"
             
         if memories:
-            mem_str = "\n".join([f"- {m.get('input_data', '')} | Label: {m.get('label', 'N/A')}" for m in memories])
-            context_str += f"Relevant Memories:\n{mem_str}"
+            mem_str = "\n".join([f"- {m.get('input_data', '').strip()}" for m in memories])
+            context_str += f"{mem_str}"
             
-        prefix = f"[NeuroSleepNet Context]\n{context_str}\n[End Context]\n\n"
+        prefix = f"Background Information:\n{context_str}\n\nQuery: "
         return prefix + input_data
 
     def learn(self, task_id: str, input_data: Any, label: Any = None, **kwargs):

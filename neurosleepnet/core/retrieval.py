@@ -53,6 +53,9 @@ class HybridSearchEngine:
         if not memories:
             return []
             
+        import time
+        current_time = time.time()
+        
         scored_memories = []
         for mem in memories:
             doc_text = str(mem.get("input_data", mem.get("label", "")))
@@ -68,7 +71,19 @@ class HybridSearchEngine:
             s_score = self.semantic_score(query_emb, doc_emb)
             
             # Hybrid score
-            final_score = (self.alpha * s_score) + ((1 - self.alpha) * k_score)
+            base_score = (self.alpha * s_score) + ((1 - self.alpha) * k_score)
+            
+            # Recency Weighting
+            mem_time = mem.get("timestamp", 0)
+            if mem_time > 0:
+                age_seconds = max(0, current_time - mem_time)
+                # Adds up to +0.2 boost for extremely recent memories, 
+                # decaying gently as age increases
+                recency_boost = 0.2 / (1.0 + age_seconds * 0.1)
+                final_score = base_score + recency_boost
+            else:
+                final_score = base_score
+                
             scored_memories.append((final_score, mem))
             
         # Sort by highest score first

@@ -71,7 +71,8 @@ class ReplayBuffer:
             "embedding": embedding.tolist() if isinstance(embedding, np.ndarray) else embedding,
             "label": label,
             "input_data": raw_text,
-            "score": score
+            "score": score,
+            "timestamp": time.time()
         }
         
         # Update edge cache instantly (Incremental Indexing)
