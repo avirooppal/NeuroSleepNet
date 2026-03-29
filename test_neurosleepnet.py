@@ -153,9 +153,59 @@ def run_proof():
         nsn_answers.append(ans)
 
     # ──────────────────────────────────────────────────────────────────────────
+    #  ROUND 3 — Multi-Round Long Context Demo
+    # ──────────────────────────────────────────────────────────────────────────
+    divider("🌐 ROUND 3: Multi-Round Long Context Memory")
+    print("  Simulating a long conversation over many turns...\n")
+
+    conversation_history = [
+        "User: Hi, my name is Alex and I'm a software engineer.",
+        "Agent: Nice to meet you Alex! What kind of software do you write?",
+        "User: I do a lot of Python backend work, usually with FastAPI.",
+        "Agent: That's great, FastAPI is very fast and modern.",
+        "User: Yeah. By the way, I have a cat named Whiskers.",
+        "Agent: Whiskers is a cute name! How old is he?",
+        "User: He's 4 years old and loves salmon.",
+        "Agent: Good to know. Do you have any other pets?",
+        "User: No, just him. I used to have a parrot but he flew away.",
+        "Agent: Oh no, I'm sorry to hear that.",
+        "User: It's okay. Anyway, I'm planning a trip to Japan next month.",
+        "Agent: Japan is beautiful! Which cities are you visiting?",
+        "User: Kyoto and Tokyo. I really want to see the bamboo forests.",
+        "Agent: That sounds like an amazing itinerary. Enjoy!",
+    ]
+
+    print("  📚 Teaching the agent 14 consecutive conversation turns (simulating long chat history)...\n")
+    for i, turn in enumerate(conversation_history, 1):
+        memory_agent.learn(
+            task_id="multi_turn_session",
+            input_data=turn,
+            label="ChatTurn"
+        )
+        # Just printing a few to keep output clean
+        if i <= 3 or i >= 13:
+            print(f"    [{i}] ✓ {turn}")
+        elif i == 4:
+            print("    ... (more turns stored) ...")
+
+    print("\n  Now asking questions about information scattered across the long history.")
+    print("  A normal LLM would need ALL this text resent in every single prompt (costing tokens).")
+    print("  NeuroSleepNet automatically retrieves only what's needed.\n")
+
+    long_qs = [
+        "What is my name and my profession?",
+        "What pets do I have, and what does my pet like to eat?",
+        "Where am I traveling to and what specific things do I want to see?",
+    ]
+
+    for q in long_qs:
+        ask(memory_agent, q, "NSN+LLM (Multi-Turn)", task_id="multi_turn_session")
+
+
+    # ──────────────────────────────────────────────────────────────────────────
     #  SCORECARD
     # ──────────────────────────────────────────────────────────────────────────
-    divider("📊 SCORECARD")
+    divider("📊 SCORECARD (ROUND 2 FACTS)")
 
     checks = [
         ("Dog = Biscuit / golden retriever", lambda a: "biscuit" in a.lower()),
