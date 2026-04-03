@@ -14,6 +14,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from neurosleepnet.server.api.routes import router as memory_v2_router
+app.include_router(memory_v2_router, prefix="/api")
+
 app.include_router(router)
 
 @app.get("/api/health")
