@@ -4,10 +4,9 @@ services:
   api:
     build: 
       context: ./backend
-      dockerfile: Dockerfile
-    ports:
-      - "8001:8000"
+      dockerfile: Dockerfile.prod
     env_file: .env
+    restart: always
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
@@ -16,56 +15,49 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-    volumes:
-      - ./backend:/app
-      - /app/.venv
-    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   worker:
     build:
       context: ./backend
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.prod
     env_file: .env
+    restart: always
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       - db
       - redis
-    volumes:
-      - ./backend:/app
-      - /app/.venv
-    command: uv run celery -A app.workers.celery_app worker --loglevel=info -B
+    command: celery -A app.workers.celery_app worker --loglevel=info -B
 
   db:
     image: pgvector/pgvector:pg16
+    restart: always
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-neurosleepnet}
-      POSTGRES_USER: ${POSTGRES_USER:-nsn}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nsn}
-    ports:
-      - "5433:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata_prod:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nsn} -d ${POSTGRES_DB:-neurosleepnet}"]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-neurosleepnet}"]
+      interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    ports:
-      - "6380:6379"
+    restart: always
 
   nginx:
     image: nginx:alpine
+    restart: always
     ports:
-      - "8080:80"
+      - "80:80"
     volumes:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf
     depends_on:
       - api
 
 volumes:
-  pgdata:
+  pgdata_prod:

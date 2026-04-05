@@ -1,0 +1,134 @@
+{
+  "info": {
+    "name": "NeuroSleepNet V2 Memory Middleware",
+    "description": "Endpoints for writing, reading, and querying metrics for the memory layer.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8000/api/health",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "health"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Write Memory",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"user_123\",\n  \"session_id\": \"session_xyz\",\n  \"task_id\": \"coding_assistant\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"I prefer working with FastAPI.\"\n    }\n  ]\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8000/api/v2/write",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "v2",
+            "write"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Read Memory",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_id\": \"user_123\",\n  \"query\": \"What framework do I prefer?\",\n  \"task_id\": \"coding_assistant\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8000/api/v2/read",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "v2",
+            "read"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get User Metrics",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8000/api/v2/metrics/user_123",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "v2",
+            "metrics",
+            "user_123"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Global Admin Metrics",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8000/api/v2/admin/metrics?token=super-secret-creator-token",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "8000",
+          "path": [
+            "api",
+            "v2",
+            "admin",
+            "metrics"
+          ],
+          "query": [
+            {
+              "key": "token",
+              "value": "super-secret-creator-token"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

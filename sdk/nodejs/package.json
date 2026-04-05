@@ -1,0 +1,26 @@
+{
+  "name": "@neurosleepnet/sdk",
+  "version": "0.1.0",
+  "description": "NeuroSleepNet — A Sleep-Inspired Hybrid Memory Layer for Continual AI Learning",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublish": "npm run build"
+  },
+  "keywords": [
+    "memory",
+    "ai",
+    "sleep",
+    "continual-learning",
+    "neurosleepnet"
+  ],
+  "author": "NeuroSleepNet Team",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

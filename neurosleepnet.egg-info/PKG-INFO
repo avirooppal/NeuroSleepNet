@@ -4,10 +4,21 @@ Version: 0.1.0
 Summary: The Memory Layer for AI Agents
 Author-email: Vibe Coder <vibe@neurosleepnet.ai>
 Project-URL: Homepage, https://github.com/neurosleepnet/neurosleepnet
-Requires-Python: <3.13,>=3.10
+Requires-Python: >=3.10
 Description-Content-Type: text/markdown
-Requires-Dist: numpy>=1.26.0
-Requires-Dist: redis>=5.0.0
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: pydantic[email]
+Requires-Dist: numpy
+Requires-Dist: openai
+Requires-Dist: fastapi-sso
+Requires-Dist: httpx
+Requires-Dist: pyjwt
+Requires-Dist: python-dotenv>=1.2.2
+Requires-Dist: apscheduler>=3.11.2
+Requires-Dist: requests>=2.33.1
+Requires-Dist: fastembed>=0.8.0
+Requires-Dist: email-validator>=2.3.0
 
 # NeuroSleepNet
 

@@ -1,2 +1,13 @@
-numpy>=1.26.0
-redis>=5.0.0
+fastapi
+uvicorn
+pydantic[email]
+numpy
+openai
+fastapi-sso
+httpx
+pyjwt
+python-dotenv>=1.2.2
+apscheduler>=3.11.2
+requests>=2.33.1
+fastembed>=0.8.0
+email-validator>=2.3.0
