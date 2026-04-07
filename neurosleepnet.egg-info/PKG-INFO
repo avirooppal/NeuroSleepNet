@@ -2,9 +2,9 @@ Metadata-Version: 2.4
 Name: neurosleepnet
 Version: 0.1.0
 Summary: The Memory Layer for AI Agents
-Author-email: Vibe Coder <vibe@neurosleepnet.ai>
-Project-URL: Homepage, https://github.com/neurosleepnet/neurosleepnet
-Requires-Python: >=3.10
+Author-email: avi <palaviroopoff@gmail.com>
+Project-URL: Homepage, https://github.com/avirooppal/NeuroSleepNet.git
+Requires-Python: <3.13,>=3.10
 Description-Content-Type: text/markdown
 Requires-Dist: fastapi
 Requires-Dist: uvicorn

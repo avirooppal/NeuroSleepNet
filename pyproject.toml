@@ -23,6 +23,7 @@ dependencies = [
     "requests>=2.33.1",
     "fastembed>=0.8.0",
     "email-validator>=2.3.0",
+    "python-multipart",
 ]
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
