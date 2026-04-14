@@ -19,6 +19,7 @@ Requires-Dist: apscheduler>=3.11.2
 Requires-Dist: requests>=2.33.1
 Requires-Dist: fastembed>=0.8.0
 Requires-Dist: email-validator>=2.3.0
+Requires-Dist: python-multipart
 
 # NeuroSleepNet
 

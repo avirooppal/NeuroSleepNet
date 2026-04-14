@@ -15,12 +15,7 @@ def run_nightly_sleep():
     """
     Periodic task to trigger the sleep phase for all users.
     """
-    loop = asyncio.get_event_loop()
-    if loop.is_closed():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-    return loop.run_until_complete(_run_all_sleep())
+    return asyncio.run(_run_all_sleep())
 
 
 async def _run_all_sleep():

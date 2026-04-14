@@ -1,11 +1,8 @@
-version: "3.9"
-
 services:
   api:
     build: 
       context: ./backend
       dockerfile: Dockerfile.prod
-    env_file: .env
     restart: always
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/neurosleepnet
@@ -20,7 +17,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile.prod
-    env_file: .env
     restart: always
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/neurosleepnet
