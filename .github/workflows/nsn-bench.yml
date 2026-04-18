@@ -1,0 +1,69 @@
+name: NeuroSleepNet Benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  nsn-benchmark:
+    name: Memory Layer Benchmark
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install NeuroSleepNet SDK
+        run: pip install -e "sdk/python[benchmark]"
+
+      - name: Run benchmark (mock mode — no backend required)
+        env:
+          NSN_API_KEY: ${{ secrets.NSN_API_KEY }}
+        run: |
+          nsn-bench run --model "${{ github.event.repository.name }}" --scenarios all --output results.json
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: nsn-benchmark-report
+          path: |
+            results.json
+            report.html
+
+      - name: Comment benchmark results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let summary = '### NeuroSleepNet Benchmark Results\n\n';
+            try {
+              const results = JSON.parse(fs.readFileSync('results.json', 'utf8'));
+              summary += `**Overall Memory Score:** ${Math.round(results.overall_score)}/100 🧠\n`;
+              summary += `**Run ID:** \`${results.run_id}\`\n\n`;
+              summary += '| Scenario | Baseline | Control | Active | Δ |\n';
+              summary += '|----------|----------|---------|--------|---|\n';
+              for (const r of results.results) {
+                const raw = r.raw_score ?? 0;
+                const ctrl = r.control_score ?? raw;
+                const nsn = r.nsn_score ?? r.score;
+                const delta = nsn - raw;
+                summary += `| ${r.scenario} | ${raw.toFixed(0)}% | ${ctrl.toFixed(0)}% | ${nsn.toFixed(0)}% | **+${delta.toFixed(0)}%** |\n`;
+              }
+              summary += `\n*Reproduce:* \`nsn-bench run --model '${results.model}' --scenarios all\``;
+            } catch (e) {
+              summary += '_Could not parse results.json_';
+            }
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });

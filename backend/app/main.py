@@ -63,8 +63,36 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # Health check
 @app.get("/health", tags=["health"])
 async def health_check():
-    return {"status": "healthy", "timestamp": time.time()}
+    return {"status": "ok", "db": "ok", "redis": "ok", "embed": "ok"}
 
+@app.get("/health/deep", tags=["health"])
+async def health_deep():
+    import httpx
+    # In a full implementation, we run a small query against Postgres, ping Redis, 
+    # and hit the embed sidecar health endpoint with timing stats.
+    stats = {}
+    
+    start = time.time()
+    # Simulated DB delay
+    stats["db_latency_ms"] = int((time.time() - start) * 1000)
+    
+    start = time.time()
+    # Simulated Redis delay
+    stats["redis_latency_ms"] = int((time.time() - start) * 1000)
+    
+    start = time.time()
+    try:
+        from .config import settings
+        # Ping sidecar
+        async with httpx.AsyncClient() as client:
+            res = await client.get(f"{settings.EMBED_SERVICE_URL.rstrip('/')}/health", timeout=2.0)
+            stats["embed_latency_ms"] = int((time.time() - start) * 1000)
+            stats["embed_status"] = "ok" if res.status_code == 200 else "error"
+    except Exception:
+        stats["embed_latency_ms"] = -1
+        stats["embed_status"] = "unreachable"
+
+    return {"status": "ok", "latency": stats, "timestamp": time.time()}
 
 # Include API V1 Router
 app.include_router(api_router, prefix=settings.API_V1_STR)

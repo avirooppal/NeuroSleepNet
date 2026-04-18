@@ -10,7 +10,8 @@ from .base import Base
 
 if TYPE_CHECKING:
     from .api_key import ApiKey
-    from .task import Task
+    from .project import Project
+    from .benchmark import BenchmarkRun
     from .memory import Memory
     from .usage_log import UsageLog
     from .audit_log import AuditLog
@@ -29,7 +30,8 @@ class User(Base):
 
     # Relationships
     api_keys: Mapped[List["ApiKey"]] = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
-    tasks: Mapped[List["Task"]] = relationship("Task", back_populates="user", cascade="all, delete-orphan")
+    projects: Mapped[List["Project"]] = relationship("Project", back_populates="user", cascade="all, delete-orphan")
+    benchmark_runs: Mapped[List["BenchmarkRun"]] = relationship("BenchmarkRun", cascade="all, delete-orphan")
     memories: Mapped[List["Memory"]] = relationship("Memory", back_populates="user", cascade="all, delete-orphan")
     usage_logs: Mapped[List["UsageLog"]] = relationship("UsageLog", back_populates="user", cascade="all, delete-orphan")
     audit_logs: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="user", cascade="all, delete-orphan")

@@ -8,6 +8,16 @@ dependencies = [
     "httpx>=0.27.0",
 ]
 
+[project.scripts]
+nsn-bench = "neurosleepnet.benchmark.cli:main"
+
+[project.optional-dependencies]
+local_llm = [
+    "transformers>=4.38.0",
+    "torch>=2.0.0",
+    "accelerate>=0.27.0"
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

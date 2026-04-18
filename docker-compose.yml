@@ -6,7 +6,7 @@ services:
     ports:
       - "8001:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/neurosleepnet
+      - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       db:
@@ -23,7 +23,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/neurosleepnet
+      - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
     depends_on:
       - db
@@ -31,7 +31,7 @@ services:
     volumes:
       - ./backend:/app
       - /app/.venv
-    command: uv run celery -A app.workers.celery_app worker --loglevel=info -B
+    command: uv run python -m app.workers.stream_worker
 
   db:
     image: pgvector/pgvector:pg16
@@ -53,6 +53,19 @@ services:
     image: redis:7-alpine
     ports:
       - "6380:6379"
+
+  nsn-embed:
+    build:
+      context: ./services/embed
+      dockerfile: Dockerfile
+    environment:
+      - MODEL=BAAI/bge-small-en-v1.5
+    ports:
+      - "8001:8001"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
 
   nginx:
     image: nginx:alpine

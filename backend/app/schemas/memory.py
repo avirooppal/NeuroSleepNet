@@ -4,31 +4,14 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-
-# Task Schemas
-class TaskBase(BaseModel):
-    name: str
-
-
-class TaskCreate(TaskBase):
-    pass
-
-
-class Task(TaskBase):
-    id: uuid.UUID
-    user_id: uuid.UUID
-    residual_context: Optional[Dict[str, Any]] = None
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-# Memory Schemas
 class MemoryBase(BaseModel):
     content: str
-    task_id: Optional[uuid.UUID] = None
+    project_id: Optional[uuid.UUID] = None
+    session_id: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    importance: float = 1.0
+    ttl_days: Optional[int] = Field(default=None, description="Hard deletion after N days")
 
 
 class MemoryCreate(MemoryBase):
@@ -44,6 +27,7 @@ class Memory(MemoryBase):
     created_at: datetime
     last_accessed_at: datetime
     last_consolidated_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -51,7 +35,7 @@ class Memory(MemoryBase):
 
 class MemorySearch(BaseModel):
     query: str
-    task_id: Optional[uuid.UUID] = None
+    project_id: Optional[uuid.UUID] = None
     top_k: int = 5
     min_attention_score: float = 0.3
 
@@ -59,6 +43,18 @@ class MemorySearch(BaseModel):
 class MemorySearchResult(Memory):
     attention_score: float
     why_retrieved: str
+    consolidation_label: str = "Weak"
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        if self.consolidation_score >= 0.8:
+            self.consolidation_label = "Core"
+        elif self.consolidation_score >= 0.4:
+            self.consolidation_label = "Established"
+        elif self.consolidation_score >= 0.1:
+            self.consolidation_label = "Developing"
+        else:
+            self.consolidation_label = "Weak"
 
 
 class SearchResponse(BaseModel):

@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "NeuroSleepNet"
+    NSN_PII_DETECTION_ENABLED: bool = True
+    NSN_ENCRYPTION_KEY: str = "J1d2Y1xM2fO9A2qP0bW3cE7rK5mN8vT6" # Must be 32 bytes for AES-256 in prod
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = "your_super_secret_key_here"
     ALGORITHM: str = "HS256"
@@ -14,6 +16,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/neurosleepnet"
 
     REDIS_URL: str = "redis://redis:6379/0"
+    EMBED_SERVICE_URL: str = "http://nsn-embed:8001"
 
     OPENAI_API_KEY: str = ""
 
