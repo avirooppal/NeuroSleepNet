@@ -1,37 +1,97 @@
 services:
   api:
-    build: 
+    build:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "8001:8000"
+      - "8000:8000"
     environment:
       - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
+      - EMBED_SERVICE_URL=http://nsn-embed:8001
+      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
+      - NSN_PII_DETECTION_ENABLED=${NSN_PII_DETECTION_ENABLED:-true}
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_started
+      nsn-embed:
         condition: service_started
     volumes:
       - ./backend:/app
       - /app/.venv
     command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  worker:
+  # --- Celery Workers — three separate queues, never merged ---
+
+  worker-sleep:
     build:
       context: ./backend
       dockerfile: Dockerfile
     environment:
       - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
+      - EMBED_SERVICE_URL=http://nsn-embed:8001
+      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
     depends_on:
       - db
       - redis
     volumes:
       - ./backend:/app
       - /app/.venv
-    command: uv run python -m app.workers.stream_worker
+    command: uv run celery -A app.workers.celery_app.celery_app worker -Q sleep -c 1 --loglevel=info
+
+  worker-webhooks:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
+      - REDIS_URL=redis://redis:6379/0
+      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+    command: uv run celery -A app.workers.celery_app.celery_app worker -Q webhooks -c 3 --loglevel=info
+
+  worker-embed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
+      - REDIS_URL=redis://redis:6379/0
+      - EMBED_SERVICE_URL=http://nsn-embed:8001
+      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
+    depends_on:
+      - db
+      - redis
+      - nsn-embed
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+    command: uv run celery -A app.workers.celery_app.celery_app worker -Q embed --autoscale=10,1 --loglevel=info
+
+  celerybeat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
+      - REDIS_URL=redis://redis:6379/0
+      - NSN_SLEEP_SCHEDULE=${NSN_SLEEP_SCHEDULE:-0 3 * * *}
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - celerybeat_data:/var/run/celerybeat
+    command: uv run celery -A app.workers.celery_app.celery_app beat --loglevel=info
 
   db:
     image: pgvector/pgvector:pg16
@@ -78,3 +138,4 @@ services:
 
 volumes:
   pgdata:
+  celerybeat_data:
