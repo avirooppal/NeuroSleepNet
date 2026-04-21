@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { FixedSizeList as List } from 'react-window';
+import { FixedSizeList } from 'react-window';
 import { motion } from 'framer-motion';
 import { Search, Trash2, Star, Archive, Filter, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -54,7 +54,7 @@ export default function MemoryExplorer() {
     const isAtRisk = mem.consolidation_score < 0.25 && mem.access_count === 0;
     return (
       <div style={style} className="memory-row">
-        <div className="memory-row-inner">
+        <div className="memory-row-inner group">
           <span className="score-badge" style={{ color: SCORE_COLORS[label], borderColor: SCORE_COLORS[label] + '44' }}>
             {mem.consolidation_score.toFixed(3)}
           </span>
@@ -114,9 +114,9 @@ export default function MemoryExplorer() {
       ) : memories.length === 0 ? (
         <div className="explorer-empty">No memories match this filter.</div>
       ) : (
-        <List height={Math.min(600, memories.length * 64)} itemCount={memories.length} itemSize={64} width="100%">
+        <FixedSizeList height={Math.min(600, memories.length * 64)} itemCount={memories.length} itemSize={64} width="100%">
           {Row}
-        </List>
+        </FixedSizeList>
       )}
     </div>
   );

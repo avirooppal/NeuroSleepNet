@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
-import * as d3 from 'd3-force';
+import * as d3 from 'd3';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/v1';
 const SCORE_COLORS: Record<string, string> = { Core: '#00e5cc', Established: '#4f9cf9', Developing: '#ffb347', Weak: '#ff6b6b' };
