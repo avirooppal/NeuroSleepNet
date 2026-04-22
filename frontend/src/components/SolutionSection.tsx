@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Search, Clock, Zap, Moon } from "lucide-react";
+import { Search, Clock, Zap, Moon, Bell } from "lucide-react";
 
 const features = [
   {
@@ -26,6 +26,12 @@ const features = [
     desc: "Memories are periodically aggregated into a clean Knowledge Graph during idle periods.",
     detail: "Automatic deduplication and noise pruning keep the memory store lean and accurate over time.",
   },
+  {
+    icon: Bell,
+    title: "Webhook Event System",
+    desc: "Fire-and-forget events on memory.stored, memory.archived, sleep.completed, and quota.warning.",
+    detail: "Events enqueued after DB commit — never during request handling. Exponential backoff retry on failure.",
+  },
 ];
 
 const SolutionSection = () => (
@@ -39,10 +45,11 @@ const SolutionSection = () => (
       >
         <p className="text-xs uppercase tracking-[0.3em] text-primary mb-4">how it works</p>
         <h2 className="font-heading text-3xl md:text-5xl font-bold">
-          Four pillars of persistent memory
+          Five pillars of persistent memory
         </h2>
         <p className="text-muted-foreground mt-4 max-w-2xl mx-auto text-sm md:text-base">
-          NeuroSleepNet augments any local model with a lightweight sidecar that handles encoding, retrieval, and consolidation—all without external services.
+          NeuroSleepNet augments any local model with a lightweight sidecar that handles encoding,
+          retrieval, consolidation, and event delivery—all without external services.
         </p>
       </motion.div>
 
@@ -50,7 +57,9 @@ const SolutionSection = () => (
         {features.map((f, i) => (
           <motion.div
             key={f.title}
-            className="glass-card p-7 group hover:border-primary/30 transition-all duration-500"
+            className={`glass-card p-7 group hover:border-primary/30 transition-all duration-500 ${
+              i === 4 ? "md:col-span-2" : ""
+            }`}
             initial={{ opacity: 0, y: 30 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}

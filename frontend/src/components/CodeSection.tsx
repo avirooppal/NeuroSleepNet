@@ -1,61 +1,144 @@
 import { motion } from "framer-motion";
+import { useState } from "react";
 
-const codeSnippet = `from neurosleepnet.sdk.python.neurosleepnet.client import NeuroSleepClient
-from my_local_llm import LocalAgent
+const CLOUD_SNIPPET = `import neurosleepnet as nsn
 
-# 1. Connect to your persistent Memory Store
-memory = NeuroSleepClient(base_url="http://localhost:8080/api/v1")
+# One-time setup — hosted or self-hosted
+nsn.init(api_key="nsn_your_key_here")
 
-# 2. Wire your stateless Agent
-agent = LocalAgent("Qwen/Qwen2.5-0.5B")
-context = memory.read_memory(user_id="user_xyz", query="What's my context?")
+# Drop-in wrap — works with LangChain, OpenAI, HuggingFace, Ollama
+agent = nsn.wrap(your_agent)
 
-# 3. Save memory asynchronously 
-memory.write_memory("user_xyz", "session_1", [{"role":"user", "content": "I like python."}])`;
+# That's it. Your agent now has persistent memory.
+response = agent("What did we work on last session?")
 
-const CodeSection = () => (
-  <section className="py-24 md:py-32">
-    <div className="container mx-auto px-6 max-w-4xl">
-      <motion.div
-        initial={{ opacity: 0, y: 30 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-      >
-        <p className="text-xs uppercase tracking-[0.3em] text-primary mb-4">developer ux</p>
-        <h2 className="font-heading text-3xl md:text-5xl font-bold mb-10">
-          Two lines of code<br />
-          <span className="text-muted-foreground">to upgrade your Agent.</span>
-        </h2>
-      </motion.div>
+# Manually inject a high-priority fact
+nsn.remember("User prefers Python over JavaScript", importance=0.9)
 
-      <motion.div
-        className="glass-card p-6 md:p-8 overflow-x-auto glow-orange"
-        initial={{ opacity: 0, y: 20 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true }}
-        transition={{ delay: 0.2 }}
-      >
-        <pre className="text-sm md:text-base font-mono leading-relaxed">
-          <code>
-            {codeSnippet.split('\n').map((line, i) => (
-              <span key={i} className="block">
-                {line.startsWith('#') ? (
-                  <span className="text-muted-foreground">{line}</span>
-                ) : line.includes('from') || line.includes('import') ? (
-                  <span>
-                    <span className="text-primary">{line.split(' ')[0]}</span>
-                    <span className="text-foreground">{' ' + line.split(' ').slice(1).join(' ')}</span>
-                  </span>
-                ) : (
-                  <span className="text-foreground">{line}</span>
-                )}
-              </span>
-            ))}
-          </code>
-        </pre>
-      </motion.div>
-    </div>
-  </section>
-);
+# Explicitly retrieve memories (debug / custom injection)
+memories = nsn.recall(query="auth module fixes", top_k=5)
+
+# Export and migrate full memory state
+snapshot = nsn.snapshot()         # → dict
+nsn.restore(snapshot)             # restore on any instance`;
+
+const SELF_HOSTED_SNIPPET = `import neurosleepnet as nsn
+
+# Point to your own backend — no external dependency
+nsn.init(
+    api_key="nsn_your_key_here",
+    base_url="http://localhost:8080",   # self-hosted endpoint
+    project="my-agent-v2",
+    fallback_mode="silent",             # never crash the host agent
+    offline_cache=True,                 # SQLite fallback if API unreachable
+)
+
+agent = nsn.wrap(your_agent)
+
+# Diagnostics — prints latency, quota, cache hits to stdout
+nsn.status()`;
+
+const tabs = [
+  { label: "Hosted", snippet: CLOUD_SNIPPET },
+  { label: "Self-Hosted", snippet: SELF_HOSTED_SNIPPET },
+];
+
+const tokenize = (line: string) => {
+  if (line.startsWith("#")) return <span className="text-muted-foreground/70 italic">{line}</span>;
+  if (line.trim().startsWith("import") || line.trim().startsWith("from"))
+    return <span className="text-cyan-400">{line}</span>;
+  if (line.includes("nsn."))
+    return (
+      <span>
+        {line.split(/(nsn\.\w+)/).map((part, i) =>
+          part.startsWith("nsn.") ? (
+            <span key={i} className="text-primary font-semibold">{part}</span>
+          ) : (
+            <span key={i} className="text-foreground">{part}</span>
+          )
+        )}
+      </span>
+    );
+  return <span className="text-foreground">{line}</span>;
+};
+
+const CodeSection = () => {
+  const [active, setActive] = useState(0);
+
+  return (
+    <section className="py-24 md:py-32" id="quickstart">
+      <div className="container mx-auto px-6 max-w-4xl">
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+        >
+          <p className="text-xs uppercase tracking-[0.3em] text-primary mb-4">quickstart</p>
+          <h2 className="font-heading text-3xl md:text-5xl font-bold mb-4">
+            Three lines to integrate.
+            <br />
+            <span className="text-muted-foreground">Everything else is automatic.</span>
+          </h2>
+          <p className="text-sm text-muted-foreground mb-10 max-w-xl">
+            One key, one wrap. Works with any agent. SDK falls back to local SQLite cache if the API
+            is unreachable — the host agent never breaks.
+          </p>
+        </motion.div>
+
+        {/* Tab switcher */}
+        <motion.div
+          className="flex gap-2 mb-4"
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+        >
+          {tabs.map((t, i) => (
+            <button
+              key={t.label}
+              onClick={() => setActive(i)}
+              className={`px-4 py-1.5 text-xs rounded-full font-medium transition-all border ${
+                active === i
+                  ? "bg-primary text-black border-primary"
+                  : "bg-transparent text-muted-foreground border-white/10 hover:border-white/30"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </motion.div>
+
+        <motion.div
+          className="glass-card p-6 md:p-8 overflow-x-auto glow-orange"
+          key={active}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.25 }}
+        >
+          <pre className="text-sm md:text-base font-mono leading-relaxed">
+            <code>
+              {tabs[active].snippet.split("\n").map((line, i) => (
+                <span key={i} className="block">
+                  {tokenize(line)}
+                </span>
+              ))}
+            </code>
+          </pre>
+        </motion.div>
+
+        <motion.p
+          className="text-xs text-muted-foreground mt-4"
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={{ once: true }}
+        >
+          <span className="text-primary">nsn.recall()</span> for semantic retrieval ·{" "}
+          <span className="text-primary">nsn.snapshot()</span> /{" "}
+          <span className="text-primary">nsn.restore()</span> for migrations ·{" "}
+          <span className="text-primary">nsn.status()</span> for diagnostics
+        </motion.p>
+      </div>
+    </section>
+  );
+};
 
 export default CodeSection;

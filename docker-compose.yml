@@ -18,7 +18,11 @@ services:
       - /app/.venv
     command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  worker:
+  # ─── Three dedicated Celery workers — one per queue ────────────────────────
+  # Separate containers prevent the sleep queue from starving webhooks
+  # or the embed queue from blocking consolidation tasks.
+
+  worker-sleep:
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -31,7 +35,37 @@ services:
     volumes:
       - ./backend:/app
       - /app/.venv
-    command: uv run python -m app.workers.stream_worker
+    command: uv run celery -A app.workers.tasks worker -Q sleep --loglevel=info --concurrency=2
+
+  worker-webhooks:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+    command: uv run celery -A app.workers.tasks worker -Q webhooks --loglevel=info --concurrency=3
+
+  worker-embed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+    command: uv run celery -A app.workers.tasks worker -Q embed --loglevel=info --concurrency=4
 
   db:
     image: pgvector/pgvector:pg16
@@ -61,7 +95,7 @@ services:
     environment:
       - MODEL=BAAI/bge-small-en-v1.5
     ports:
-      - "8001:8001"
+      - "8002:8001"
     deploy:
       resources:
         limits:
