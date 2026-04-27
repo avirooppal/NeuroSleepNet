@@ -23,13 +23,9 @@ services:
       - /app/.venv
     command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-<<<<<<< HEAD
   # ─── Three dedicated Celery workers — one per queue ────────────────────────
   # Separate containers prevent the sleep queue from starving webhooks
   # or the embed queue from blocking consolidation tasks.
-=======
-  # --- Celery Workers — three separate queues, never merged ---
->>>>>>> 1b6bb460b95d09f307121ab8d5c911e73d10865a
 
   worker-sleep:
     build:
@@ -46,11 +42,7 @@ services:
     volumes:
       - ./backend:/app
       - /app/.venv
-<<<<<<< HEAD
     command: uv run celery -A app.workers.tasks worker -Q sleep --loglevel=info --concurrency=2
-=======
-    command: uv run celery -A app.workers.celery_app.celery_app worker -Q sleep -c 1 --loglevel=info
->>>>>>> 1b6bb460b95d09f307121ab8d5c911e73d10865a
 
   worker-webhooks:
     build:
@@ -59,21 +51,14 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
-<<<<<<< HEAD
-=======
       - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
->>>>>>> 1b6bb460b95d09f307121ab8d5c911e73d10865a
     depends_on:
       - db
       - redis
     volumes:
       - ./backend:/app
       - /app/.venv
-<<<<<<< HEAD
     command: uv run celery -A app.workers.tasks worker -Q webhooks --loglevel=info --concurrency=3
-=======
-    command: uv run celery -A app.workers.celery_app.celery_app worker -Q webhooks -c 3 --loglevel=info
->>>>>>> 1b6bb460b95d09f307121ab8d5c911e73d10865a
 
   worker-embed:
     build:
@@ -82,8 +67,6 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
-<<<<<<< HEAD
-=======
       - EMBED_SERVICE_URL=http://nsn-embed:8001
       - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
     depends_on:
@@ -93,7 +76,7 @@ services:
     volumes:
       - ./backend:/app
       - /app/.venv
-    command: uv run celery -A app.workers.celery_app.celery_app worker -Q embed --autoscale=10,1 --loglevel=info
+    command: uv run celery -A app.workers.tasks worker -Q embed --loglevel=info --concurrency=4
 
   celerybeat:
     build:
@@ -103,19 +86,14 @@ services:
       - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
       - NSN_SLEEP_SCHEDULE=${NSN_SLEEP_SCHEDULE:-0 3 * * *}
->>>>>>> 1b6bb460b95d09f307121ab8d5c911e73d10865a
     depends_on:
       - db
       - redis
     volumes:
       - ./backend:/app
       - /app/.venv
-<<<<<<< HEAD
-    command: uv run celery -A app.workers.tasks worker -Q embed --loglevel=info --concurrency=4
-=======
       - celerybeat_data:/var/run/celerybeat
-    command: uv run celery -A app.workers.celery_app.celery_app beat --loglevel=info
->>>>>>> 1b6bb460b95d09f307121ab8d5c911e73d10865a
+    command: uv run celery -A app.workers.tasks beat --loglevel=info
 
   db:
     image: pgvector/pgvector:pg16

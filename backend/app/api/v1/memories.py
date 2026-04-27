@@ -14,11 +14,36 @@ from ...schemas import memory as memory_schema
 from ...services.memory_service import memory_service
 from ...core.pii import redact_pii
 from .auth import get_current_user
+from ...models.project import Project
 
 router = APIRouter()
 
+async def _resolve_project_id(project_id_raw: Union[uuid.UUID, str], user_id: uuid.UUID, db: AsyncSession) -> uuid.UUID:
+    """Helper to convert a project name or UUID string into a UUID."""
+    if isinstance(project_id_raw, uuid.UUID):
+        return project_id_raw
+    
+    # Try to parse as UUID first
+    try:
+        return uuid.UUID(project_id_raw)
+    except (ValueError, TypeError):
+        pass
+    
+    # Otherwise treat as project name and find/create
+    stmt = select(Project).where(Project.user_id == user_id, Project.name == project_id_raw)
+    result = await db.execute(stmt)
+    project = result.scalars().first()
+    
+    if not project:
+        # Auto-create project for the user if it doesn't exist
+        project = Project(user_id=user_id, name=project_id_raw)
+        db.add(project)
+        await db.commit()
+        await db.refresh(project)
+        
+    return project.id
 
-@router.post("/", response_model=memory_schema.Memory, status_code=status.HTTP_201_CREATED)
+
 async def create_memory(
     memory_in: memory_schema.MemoryCreate,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -29,6 +54,10 @@ async def create_memory(
     Store a new memory. Idempotency-Key header prevents duplicate writes on retry.
     Webhook is enqueued AFTER db.commit() — never before.
     """
+    # ── Resolve Project ID ──────────────────────────────────────────────────
+    actual_project_id = None
+    if memory_in.project_id:
+        actual_project_id = await _resolve_project_id(memory_in.project_id, current_user.id, db)
     # ── Idempotency check ─────────────────────────────────────────────────────
     if idempotency_key:
         try:
@@ -48,7 +77,7 @@ async def create_memory(
         session=db,
         user=current_user,
         content=safe_content,
-        project_id=memory_in.project_id,
+        project_id=actual_project_id,
         session_id=memory_in.session_id,
         tags=memory_in.tags,
         metadata=memory_in.metadata,
@@ -140,10 +169,10 @@ async def create_memory_batch(
     return created
 
 
-@router.get("/retrieve", response_model=memory_schema.SearchResponse)
+@router.get("/retrieve")
 async def retrieve_memories(
     query: str,
-    project_id: str,
+    project_id: Union[uuid.UUID, str],
     top_k: int = Query(5, ge=1, le=100),
     dry_run: bool = Query(False, description="If true, does not update access_count or consolidation scoring."),
     current_user: User = Depends(get_current_user),
@@ -154,10 +183,13 @@ async def retrieve_memories(
     dry_run=true retrieves without affecting consolidation scores — used by
     the dashboard "What would my agent remember?" search bar.
     """
+    # ── Resolve Project ID ──────────────────────────────────────────────────
+    actual_project_id = await _resolve_project_id(project_id, current_user.id, db)
+
     memories = await memory_service.search_memories(
         session=db,
         user_id=current_user.id,
-        project_id=uuid.UUID(project_id),
+        project_id=actual_project_id,
         query=query,
         top_k=top_k,
         dry_run=dry_run,

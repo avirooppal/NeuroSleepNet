@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import Boolean, DateTime, String, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -22,7 +22,9 @@ class User(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String, unique=True, index=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    password_hash: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # None for OAuth-only users
+    github_id: Mapped[Optional[int]] = mapped_column(nullable=True, unique=True, index=True)
+    avatar_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     plan: Mapped[str] = mapped_column(String, default="free")  # 'free' | 'paid'
     razorpay_subscription_id: Mapped[str] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

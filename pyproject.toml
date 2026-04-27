@@ -1,40 +1,5 @@
-[build-system]
-requires = ["setuptools>=42", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "neurosleepnet"
-version = "0.1.0"
-description = "The Memory Layer for AI Agents"
-authors = [
-    { name = "avi", email = "palaviroopoff@gmail.com" }
-]
-dependencies = [
-    "fastapi",
-    "uvicorn",
-    "pydantic[email]",
-    "numpy",
-    "openai",
-    "fastapi-sso",
-    "httpx",
-    "pyjwt",
-    "python-dotenv>=1.2.2",
-    "apscheduler>=3.11.2",
-    "requests>=2.33.1",
-    "fastembed>=0.8.0",
-    "email-validator>=2.3.0",
-    "python-multipart",
-]
-readme = "README.md"
-requires-python = ">=3.10,<3.13"
-
-[project.urls]
-Homepage = "https://github.com/avirooppal/NeuroSleepNet.git"
-
-[tool.setuptools.packages.find]
-include = ["neurosleepnet*"]
-
 [tool.uv.workspace]
 members = [
     "backend",
+    "sdk/python",
 ]

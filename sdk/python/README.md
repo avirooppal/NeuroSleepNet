@@ -1,6 +1,6 @@
 # NeuroSleepNet Python SDK
 
-A sleep-inspired hybrid memory layer for continual AI learning.
+A sleep-inspired hybrid memory layer for continual AI learning. Give your local LLMs and agents infinite memory with a single line of code.
 
 ## Installation
 
@@ -8,47 +8,54 @@ A sleep-inspired hybrid memory layer for continual AI learning.
 pip install neurosleepnet
 ```
 
+For local LLM support (HuggingFace, Torch):
+```bash
+pip install "neurosleepnet[local_llm]"
+```
+
 ## Quick Start
 
 ```python
-from neurosleepnet import NeuroSleepClient
+import neurosleepnet as nsn
 
-# Initialize client
-client = NeuroSleepClient(
-    api_key="your_nsn_live_key",
-    base_url="http://localhost:8001/api/v1"
-)
+# 1. Initialize — no API keys required for local use
+nsn.init(project="my-agent-v1")
 
-# 1. Create a task (context)
-task = client.create_task("User Profile Learning")
-task_id = task["id"]
+# 2. Wrap your agent (OpenAI, LangChain, HuggingFace, etc.)
+# All memory injection and storage becomes transparent.
+agent = nsn.wrap(your_agent)
 
-# 2. Add memories
-client.add_memory(
-    content="User prefers dark mode and Python as primary language.",
-    task_id=task_id,
-    metadata={"source": "chat_session_1"}
-)
-
-# 3. Search with Attention
-results = client.search(
-    query="What are the user's preferences?",
-    task_id=task_id,
-    top_k=3
-)
-
-for res in results["memories"]:
-    print(f"Memory: {res['content']}")
-    print(f"Attention Score: {res['attention_score']}")
-    print(f"Reason: {res['why_retrieved']}\n")
-
-# 4. Trigger Sleep Phase (Consolidation)
-client.trigger_sleep()
+# 3. Use your agent as normal
+response = agent("What did we talk about in our last session?")
 ```
 
-## Features
+## Core Features
 
-- **Attention-based Retrieval**: Weighted by semantic similarity, recency, and consolidation score.
-- **Residual Pathways**: Cross-task context inheritance.
-- **Sleep Consolidation**: Nightly or manual memory reinforcement and pruning.
-- **Local-first hybrid**: OpenAI primary with local fallback.
+- **Project Scoping**: Isolate memories by project or agent identity.
+- **Attention-based Retrieval**: Hybrid semantic search + recency weighting.
+- **Sleep Consolidation**: Nightly background pruning and reinforcement of important facts.
+- **Local-First**: Built-in SQLite fallback ensures your agent never crashes, even if the backend is down.
+- **Zero-Ops**: Designed to run entirely on your own infrastructure.
+
+## Advanced API
+
+```python
+# Manually remember a fact
+nsn.remember("User prefers Python", importance=0.9, tags=["pref"])
+
+# Retrieve memories semantically
+memories = nsn.recall("coding preferences", top_k=3)
+
+# Diagnostics
+nsn.status()
+
+# Explain why a memory was retrieved
+nsn.explain_last()
+
+# Export/Import full state
+state = nsn.snapshot()
+nsn.restore(state)
+```
+
+## License
+Apache 2.0

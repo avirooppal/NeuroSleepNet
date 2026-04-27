@@ -76,9 +76,10 @@ _WRITE_RATE_LIMIT = 20
 # ── init() ─────────────────────────────────────────────────────────────────────
 
 def init(
-    api_key: str,
     project: str = "default",
+    api_key: str = "anonymous",
     session_id: Optional[str] = None,
+    base_url: Optional[str] = None,
     fallback_mode: str = "silent",       # "silent" | "warn" | "raise"
     max_context_tokens: int = 2048,
     min_memories: int = 3,
@@ -115,8 +116,7 @@ def init(
     """
     global _client, _cache, _config
 
-    if not api_key:
-        raise NSNAuthError("api_key is required. Get yours at nsn.ai/dashboard/keys.")
+    # API Key is optional for the free tier.
 
     _config.update({
         "api_key": api_key,
@@ -139,36 +139,35 @@ def init(
     level_map = {"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING, "none": logging.CRITICAL + 1}
     logging.basicConfig(level=level_map.get(log_level, logging.INFO))
 
-    _client = NeuroSleepClient(api_key=api_key)
+    kwargs = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+    _client = NeuroSleepClient(**kwargs)
 
     if offline_cache:
         _cache = OfflineCache()
 
-    # ── Eager key validation (locked contract) ───────────────────────────────
-    # Valid key    → proceeds silently
-    # Invalid key  → raises NSNAuthError immediately
-    # Network down → respects fallback_mode
+    # ── Project resolution ──────────────────────────────────────────────────
     try:
-        _client.ping()
+        projects = _client.list_projects()
+        existing = next((p for p in projects if p["name"] == project), None)
+        if existing:
+            _config["project"] = existing["id"]
+        else:
+            # Auto-create project
+            try:
+                new_p = _client.create_project(project)
+                _config["project"] = new_p["id"]
+            except Exception as e:
+                logging.getLogger("neurosleepnet").warning(f"Failed to auto-create project '{project}' via API: {e}. Falling back to name-based ID.")
+                _config["project"] = project
     except Exception as e:
-        err_str = str(e).lower()
-        is_auth_error = any(k in err_str for k in ["401", "403", "unauthorized", "forbidden", "invalid"])
-        masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else api_key[:4] + "..."
+        logging.getLogger("neurosleepnet").warning(f"Could not reach API to resolve project '{project}': {e}. Proceeding with name-based ID.")
+        _config["project"] = project
 
-        if is_auth_error:
-            raise NSNAuthError(
-                f"Invalid API key '{masked_key}'. Check your key at nsn.ai/dashboard/keys."
-            )
-        # Network down — respects fallback_mode
-        if fallback_mode == "raise":
-            raise NSNConnectionError(
-                f"NeuroSleepNet API unreachable. Check your connection or api.nsn.ai status. ({e})"
-            )
-        elif fallback_mode == "warn":
-            logging.getLogger("neurosleepnet").warning(
-                f"[NSN] API unreachable at init — running in offline mode. ({e})"
-            )
-        # fallback_mode="silent" → no output
+    # Success message with unique dashboard link
+    # The dashboard now supports /dashboard/:projectId where projectId can be UUID or name.
+    print(f"\n[NSN] NeuroSleepNet Initialized! View your live metrics at: http://localhost:3000/dashboard/{_config['project']}\n")
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
@@ -272,29 +271,33 @@ def recall(
     if _config.get("disabled"):
         return []
 
-    try:
-        result = _client.search_memories(
+    def _api_call():
+        return _client.retrieve(
             query=query,
             project=_config["project"],
-            session_id=_config["session_id"],
             top_k=top_k,
         )
-        memories = result if isinstance(result, list) else result.get("memories", [])
 
-        # Update last retrieval context for explain_last()
-        global _last_retrieval
-        _last_retrieval = {
-            "query": query,
-            "memories": memories,
-            "retrieved_at": time.time(),
-        }
-        return memories
-    except Exception as e:
-        if _config["fallback_mode"] == "raise":
-            raise
+    def _cache_call():
         if _cache:
-            return _cache.retrieve(query, _config["project"], top_k)
+            return _cache.retrieve(_config["project"], limit=top_k)
         return []
+
+    memories, from_cache = execute_with_fallback(
+        func=_api_call,
+        cache_retrieve_fn=_cache_call,
+        fallback_mode=_config["fallback_mode"],
+    )
+
+    # Update last retrieval context for explain_last()
+    global _last_retrieval
+    _last_retrieval = {
+        "query": query,
+        "memories": memories,
+        "from_cache": from_cache,
+        "timestamp": time.time()
+    }
+    return memories
 
 
 def forget(
@@ -372,52 +375,43 @@ def status():
     ──────────────────────────────────────────────────
     """
     WIDTH = 50
-    SEP = "─" * WIDTH
+    SEP = "-" * WIDTH
 
-    print(f"\nNeuroSleepNet — System Status")
+    print(f"\nNeuroSleepNet - System Status")
     print(SEP)
 
     if not _client:
-        print("❌  SDK not initialized. Run nsn.init('your_key') first.")
+        print("[!] SDK not initialized. Run nsn.init('your_key') first.")
         print(SEP)
         return
 
     key = _config.get("api_key", "")
     masked = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else key[:4] + "..."
-    print(f"✓   API key        valid  ({masked})")
+    print(f"[v] API key        valid  ({masked})")
 
     # API reachability
     try:
         t0 = time.time()
         _client.ping()
         ms = int((time.time() - t0) * 1000)
-        print(f"✓   API reachable  {ms}ms   (api.nsn.ai)")
+        print(f"[v] API reachable  {ms}ms   (api.nsn.ai)")
     except Exception as e:
-        print(f"⚠   API reachable  UNREACHABLE ({e})")
+        print(f"[!] API reachable  UNREACHABLE ({e})")
 
     # Offline cache
     if _cache:
         cache_info = getattr(_cache, 'db_path', '~/.nsn/cache.db')
         try:
             count = _cache.count(_config["project"])
-            print(f"✓   Offline cache  active ({cache_info} · {count} memories)")
+            print(f"[v] Offline cache  active ({cache_info} · {count} memories)")
         except Exception:
-            print(f"✓   Offline cache  active ({cache_info})")
+            print(f"[v] Offline cache  active ({cache_info})")
     else:
-        print("─   Offline cache  disabled")
+        print("[-] Offline cache  disabled")
 
-    # Quota
-    try:
-        usage = _client.get_usage()
-        used = usage.get("used", 0)
-        limit = usage.get("limit", 0)
-        pct = usage.get("used_pct", 0)
-        symbol = "⚠" if pct >= 80 else "✓"
-        print(f"{symbol}   Quota          {pct:.0f}% used ({used:,} / {limit:,} calls this month)")
-    except Exception:
-        print("─   Quota          unavailable")
+    print("[-] Quota          unavailable (Local mode or API timeout)")
 
-    print("─")
+    print("-" * 50)
     print(f"    Project        {_config['project']}")
     print(f"    Session        {_config.get('session_id', 'n/a')[:8]}")
     print(f"    Adapter        {_detected_adapter_name}")

@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://redis:6379/0"
     EMBED_SERVICE_URL: str = "http://nsn-embed:8001"
 
+    # GitHub OAuth
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
+    # Where to send the user after successful login (frontend)
+    FRONTEND_URL: str = "http://localhost:3000"
+
     OPENAI_API_KEY: str = ""
 
     RAZORPAY_KEY_ID: str = ""

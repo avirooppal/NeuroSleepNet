@@ -15,7 +15,6 @@ from ..models.user import User
 from ..models.project import Project
 from ..core.embeddings import get_embedding
 from ..core.attention import compute_recency_weight, generate_explanation, score_memory
-from ..core.residual import apply_residual_prior
 from .usage_service import check_and_inc_usage
 from ..config import settings
 
@@ -181,8 +180,24 @@ class MemoryService:
                 mem.access_count += 1
                 mem.last_accessed_at = now_utc
                 
-                mem_dict = mem.__dict__.copy()
-                mem_dict["content"] = decrypted_content
+                mem_dict = {
+                    "id": mem.id,
+                    "user_id": mem.user_id,
+                    "content": decrypted_content,
+                    "tags": mem.tags,
+                    "metadata": mem.metadata_ if hasattr(mem, 'metadata_') else {},
+                    "importance": getattr(mem, 'importance', 1.0),
+                    "project_id": mem.project_id,
+                    "session_id": mem.session_id,
+                    "created_at": mem.created_at,
+                    "last_accessed_at": mem.last_accessed_at,
+                    "last_consolidated_at": mem.last_consolidated_at,
+                    "consolidation_score": mem.consolidation_score,
+                    "access_count": mem.access_count,
+                    "status": mem.status,
+                    "expires_at": mem.expires_at,
+                    "schema_version": getattr(mem, 'schema_version', 1)
+                }
                 
                 res = {
                     "memory": mem_dict,

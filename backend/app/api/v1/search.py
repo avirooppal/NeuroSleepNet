@@ -23,11 +23,11 @@ async def search_memories(
     Search memories using Attention-based retrieval.
     Includes semantic similarity, recency decay, and consolidation importance.
     """
-    results, residual_applied = await memory_service.search_memories(
+    results = await memory_service.search_memories(
         session=db,
-        user=current_user,
+        user_id=current_user.id,
+        project_id=search_in.project_id or uuid.UUID(int=0),
         query=search_in.query,
-        task_id=search_in.task_id,
         top_k=search_in.top_k,
         min_attention_score=search_in.min_attention_score
     )
@@ -38,7 +38,7 @@ async def search_memories(
         mem = res["memory"]
         formatted_results.append(
             memory_schema.MemorySearchResult(
-                **mem.__dict__,
+                **mem,
                 attention_score=res["attention_score"],
                 why_retrieved=res["why_retrieved"]
             )
@@ -47,5 +47,5 @@ async def search_memories(
     return {
         "memories": formatted_results,
         "sleep_last_run": None, # Should fetch from audit logs or separate sleep log
-        "residual_context_applied": residual_applied
+        "residual_context_applied": False
     }

@@ -1,8 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from ...models.user import User
 
 from . import auth, memories, projects, search, analytics, sleep, dashboard, benchmark, webhooks, health
 
 api_router = APIRouter()
+
+@api_router.get("/ping", tags=["health"])
+async def ping(current_user: User = Depends(auth.get_current_user)):
+    """SDK ping endpoint to validate API key."""
+    return {"status": "ok", "user_id": str(current_user.id)}
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(memories.router, prefix="/memories", tags=["memories"])
 api_router.include_router(projects.router, prefix="/projects", tags=["projects"])

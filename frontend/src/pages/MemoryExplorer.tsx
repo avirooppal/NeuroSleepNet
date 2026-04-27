@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useParams } from 'react-router-dom';
 import { FixedSizeList } from 'react-window';
 import { motion } from 'framer-motion';
 import { Search, Trash2, Star, Archive, Filter, AlertTriangle } from 'lucide-react';
@@ -16,6 +17,7 @@ function getLabel(score: number) {
 }
 
 export default function MemoryExplorer() {
+  const { projectId } = useParams();
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<'all' | 'at-risk' | 'never-retrieved' | 'core'>('all');
   const [sortBy, setSortBy] = useState<'score' | 'accessed' | 'created' | 'count'>('score');
@@ -24,9 +26,9 @@ export default function MemoryExplorer() {
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['memories-explorer', query, filter, sortBy],
+    queryKey: ['memories-explorer', projectId, query, filter, sortBy],
     queryFn: () =>
-      fetch(`${API}/memories/retrieve?query=${encodeURIComponent(query || 'memory')}&project_id=default&top_k=200`, { headers })
+      fetch(`${API}/memories/retrieve?query=${encodeURIComponent(query || 'memory')}&project_id=${projectId || ''}&top_k=200`, { headers })
         .then(r => r.json()),
     keepPreviousData: true,
   });

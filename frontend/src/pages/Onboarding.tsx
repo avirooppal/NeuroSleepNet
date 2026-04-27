@@ -7,27 +7,19 @@ import { useOnboardingStore } from '../store';
 const PYTHON_SNIPPET = `pip install neurosleepnet
 
 import neurosleepnet as nsn
-nsn.init("YOUR_API_KEY")
+nsn.init(project="my-local-agent")
 agent = nsn.wrap(your_agent)  # Done.`;
 
 const NODE_SNIPPET = `npm install neurosleepnet
 
 const nsn = require('neurosleepnet');
-nsn.init('YOUR_API_KEY');
+nsn.init({ project: "my-local-agent" });
 const agent = nsn.wrap(yourAgent);`;
 
 export default function Onboarding() {
   const { step, setStep, complete, apiKeyCopied, setApiKeyCopied, roundTripVerified, setRoundTripVerified } = useOnboardingStore();
   const [tab, setTab] = useState<'python' | 'node'>('python');
   const [verifying, setVerifying] = useState(false);
-  const apiKey = localStorage.getItem('nsn-demo-key') ?? 'nsn_demo_key_here';
-
-  const copyKey = () => {
-    navigator.clipboard.writeText(apiKey);
-    setApiKeyCopied(true);
-    toast.success('API key copied ✓');
-  };
-
   const copySnippet = (text: string) => {
     navigator.clipboard.writeText(text);
     toast.success('Snippet copied ✓');
@@ -47,8 +39,8 @@ export default function Onboarding() {
   };
 
   const steps = [
-    { label: 'Get Your Key', icon: <Brain size={16} /> },
     { label: 'Install SDK', icon: <Zap size={16} /> },
+    { label: 'Run Local Backend', icon: <Brain size={16} /> },
     { label: 'Verify', icon: <Check size={16} /> },
   ];
 
@@ -75,23 +67,9 @@ export default function Onboarding() {
         </div>
 
         <AnimatePresence mode="wait">
-          {/* Step 1 — Get Your Key */}
+          {/* Step 1 — Install SDK */}
           {(step === 0 || step === 1) && (
             <motion.div key="step1" className="step-content" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-              <h2 className="step-title">Your API Key</h2>
-              <p className="step-desc">Save this key somewhere safe — you won't be able to see it again.</p>
-              <div className="key-display">
-                <code className="key-text">{apiKey}</code>
-                <button className="copy-key-btn" onClick={copyKey}><Copy size={14} /></button>
-              </div>
-              {apiKeyCopied && <div className="step-check"><Check size={13} className="text-teal" /> Key saved</div>}
-              <button className="step-next-btn" onClick={() => setStep(2)}>Next <ArrowRight size={14} /></button>
-            </motion.div>
-          )}
-
-          {/* Step 2 — Install SDK */}
-          {step === 2 && (
-            <motion.div key="step2" className="step-content" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
               <h2 className="step-title">Install & Integrate</h2>
               <div className="tab-row">
                 {(['python', 'node'] as const).map(t => (
@@ -101,6 +79,19 @@ export default function Onboarding() {
               <div className="code-block-wrapper">
                 <pre className="code-block">{tab === 'python' ? PYTHON_SNIPPET : NODE_SNIPPET}</pre>
                 <button className="copy-code-btn" onClick={() => copySnippet(tab === 'python' ? PYTHON_SNIPPET : NODE_SNIPPET)}><Copy size={12} /></button>
+              </div>
+              <button className="step-next-btn" onClick={() => setStep(2)}>Next <ArrowRight size={14} /></button>
+            </motion.div>
+          )}
+
+          {/* Step 2 — Run Local Backend */}
+          {step === 2 && (
+            <motion.div key="step2" className="step-content" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+              <h2 className="step-title">Run Local Backend</h2>
+              <p className="step-desc">Start the local docker containers to power the semantic search and dashboard.</p>
+              <div className="code-block-wrapper">
+                <pre className="code-block">docker compose up -d</pre>
+                <button className="copy-code-btn" onClick={() => copySnippet('docker compose up -d')}><Copy size={12} /></button>
               </div>
               <button className="step-next-btn" onClick={() => setStep(3)}>Next <ArrowRight size={14} /></button>
             </motion.div>
@@ -119,7 +110,7 @@ export default function Onboarding() {
                 <div className="verify-success">
                   <Check size={24} className="text-teal" />
                   <div className="text-teal font-bold">Connection verified — 3 memories round-tripped successfully</div>
-                  <button className="step-next-btn" onClick={complete}>Go to Dashboard <ArrowRight size={14} /></button>
+                  <button className="step-next-btn" onClick={() => window.location.href = '/dashboard/my-local-agent'}>Go to Dashboard <ArrowRight size={14} /></button>
                 </div>
               )}
             </motion.div>

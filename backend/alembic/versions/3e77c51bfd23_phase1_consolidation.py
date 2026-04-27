@@ -10,6 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+import pgvector
 
 # revision identifiers, used by Alembic.
 revision: str = '3e77c51bfd23'
@@ -51,9 +52,11 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['project_id'], ['projects.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )
+    op.drop_constraint(op.f('memories_task_id_fkey'), 'memories', type_='foreignkey')
     op.drop_table('tasks')
     op.add_column('memories', sa.Column('project_id', sa.UUID(), nullable=True))
     op.add_column('memories', sa.Column('session_id', sa.String(), nullable=True))
+    op.add_column('memories', sa.Column('expires_at', sa.DateTime(timezone=True), nullable=True))
     op.add_column('memories', sa.Column('tags', postgresql.JSONB(astext_type=sa.Text()), nullable=False))
     op.alter_column('memories', 'embedding',
                existing_type=pgvector.sqlalchemy.vector.VECTOR(dim=1536),
@@ -61,8 +64,9 @@ def upgrade() -> None:
                existing_nullable=True)
     op.drop_index(op.f('memories_embedding_idx'), table_name='memories', postgresql_ops={'embedding': 'vector_cosine_ops'}, postgresql_with={'lists': '100'}, postgresql_using='ivfflat')
     op.create_index(op.f('ix_memories_session_id'), 'memories', ['session_id'], unique=False)
-    op.drop_constraint(op.f('memories_task_id_fkey'), 'memories', type_='foreignkey')
     op.create_foreign_key(None, 'memories', 'projects', ['project_id'], ['id'], ondelete='SET NULL')
+    # op.drop_constraint(op.f('memories_task_id_fkey'), 'memories', type_='foreignkey')  # Moved up
+    # op.create_foreign_key(None, 'memories', 'projects', ['project_id'], ['id'], ondelete='SET NULL')
     op.drop_column('memories', 'task_id')
     # ### end Alembic commands ###
 

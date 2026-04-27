@@ -19,6 +19,16 @@ async def create_project(
     current_user: Annotated[User, Depends(get_current_user)],
     db: AsyncSession = Depends(get_db)
 ):
+    # Check for existing project with same name for this user
+    existing = await db.scalar(
+        select(Project).where(
+            Project.user_id == current_user.id,
+            Project.name == project_in.name
+        )
+    )
+    if existing:
+        return existing
+
     project = Project(
         user_id=current_user.id,
         name=project_in.name,

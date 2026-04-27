@@ -33,7 +33,7 @@ app.add_middleware(
 
 # Custom Middlewares (Order matters for request processing)
 # 1. Rate Limiting
-app.add_middleware(RateLimitMiddleware)
+# app.add_middleware(RateLimitMiddleware)
 # 2. Plan checking for mutations
 app.add_middleware(PlanCheckMiddleware)
 # 3. Audit logging

@@ -5,25 +5,22 @@ import {
 import { Link, useLocation } from "react-router-dom";
 import React from "react";
 
-const NAV_ITEMS = [
-  { to: "/dashboard",             icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/dashboard/pulse",       icon: Activity,        label: "Memory Pulse" },
-  { to: "/dashboard/memories",    icon: Database,        label: "Memory Explorer" },
-  { to: "/dashboard/projects",    icon: FolderOpen,      label: "Projects" },
-  { to: "/dashboard/keys",        icon: Key,             label: "API Keys" },
-  { to: "/dashboard/webhooks",    icon: Webhook,         label: "Webhooks" },
-  { to: "/dashboard/benchmarks",  icon: BarChart2,       label: "Benchmarks" },
-  { to: "/dashboard/settings",    icon: Settings,        label: "Settings" },
-];
+import { useParams } from "react-router-dom";
 
 const DashboardLayout = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
+  const { projectId } = useParams();
 
-  const handleLogout = () => {
-    localStorage.removeItem("nsn-token");
-    localStorage.removeItem("nsn-auth");
-    window.location.href = "/";
-  };
+  const NAV_ITEMS = [
+    { to: `/dashboard/${projectId}`,             icon: LayoutDashboard, label: "Dashboard" },
+    { to: `/dashboard/${projectId}/pulse`,       icon: Activity,        label: "Memory Pulse" },
+    { to: `/dashboard/${projectId}/memories`,    icon: Database,        label: "Memory Explorer" },
+    { to: `/dashboard/${projectId}/projects`,    icon: FolderOpen,      label: "Projects" },
+    { to: `/dashboard/${projectId}/keys`,        icon: Key,             label: "API Keys" },
+    { to: `/dashboard/${projectId}/webhooks`,    icon: Webhook,         label: "Webhooks" },
+    { to: `/dashboard/${projectId}/benchmarks`,  icon: BarChart2,       label: "Benchmarks" },
+    { to: `/dashboard/${projectId}/settings`,    icon: Settings,        label: "Settings" },
+  ];
 
   return (
     <div className="min-h-screen bg-background flex flex-col md:flex-row">
@@ -47,12 +44,6 @@ const DashboardLayout = ({ children }: { children: React.ReactNode }) => {
             );
           })}
         </nav>
-        <div className="mt-6 pt-4 border-t border-white/10">
-          <button onClick={handleLogout} className="flex items-center gap-3 px-3 py-2 w-full text-slate-400 hover:text-red-400 transition-colors text-sm rounded-lg hover:bg-white/5">
-            <LogOut className="h-4 w-4" />
-            Sign Out
-          </button>
-        </div>
       </aside>
       <main className="flex-1 overflow-y-auto relative z-10 p-6 md:p-10">
         {children}

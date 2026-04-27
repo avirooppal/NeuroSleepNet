@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
-import { Brain, Zap, Moon, AlertTriangle, Search, Play, Clock, TrendingUp, Database, RefreshCw } from 'lucide-react';
+import { Brain, Zap, Moon, AlertTriangle, Search, Play, Clock, TrendingUp, Database, RefreshCw, Activity } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/v1';
@@ -129,99 +130,47 @@ function UsagePanel({ usage }: { usage: any }) {
   );
 }
 
-function WhatWouldRemember() {
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const handleSearch = async () => {
-    if (!query.trim()) return;
-    setLoading(true);
-    try {
-      const token = localStorage.getItem('nsn-token');
-      const r = await fetch(`${API}/memories/retrieve?query=${encodeURIComponent(query)}&project_id=default&top_k=5&dry_run=true`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await r.json();
-      setResults(data.memories ?? []);
-    } catch {
-      toast.error('Search failed');
-    } finally {
-      setLoading(false);
-    }
-  };
+function LiveSDKLogs({ projectId }: { projectId?: string }) {
+  const headers = { Authorization: `Bearer local_test_key` };
+  const { data } = useQuery({
+    queryKey: ['live-logs', projectId],
+    queryFn: () => fetch(`${API}/memories/explain_last?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
+    refetchInterval: 2000,
+  });
 
   return (
-    <div className="dashboard-panel col-span-2">
+    <div className="dashboard-panel col-span-2 border border-teal-500/30 shadow-[0_0_15px_rgba(0,229,204,0.1)]">
       <div className="panel-header">
-        <Search size={18} className="text-teal" />
-        <span>What would my agent remember?</span>
-        <span className="badge-dry-run">dry_run · no score effect</span>
+        <Activity size={18} className="text-teal-400" />
+        <span className="text-teal-400">Live SDK Interceptor Logs</span>
+        <span className="live-dot ml-auto" />
       </div>
-      <div className="panel-body">
-        <div className="search-row">
-          <input
-            id="dry-run-search"
-            className="memory-search-input"
-            placeholder="Type any query to preview which memories would be injected..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          />
-          <button className="search-btn" onClick={handleSearch} disabled={loading}>
-            {loading ? <RefreshCw size={14} className="animate-spin" /> : <Search size={14} />}
-          </button>
-        </div>
-        <AnimatePresence>
-          {results.length > 0 && (
-            <motion.div
-              className="retrieval-results"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-            >
-              {results.map((mem: any, i: number) => (
-                <motion.div
-                  key={mem.id || i}
-                  className="retrieval-card"
-                  initial={{ opacity: 0, x: -12 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                >
-                  <div className="rc-score" style={{ color: SCORE_COLORS[mem.consolidation_label?.label ?? 'Weak'] ?? '#00e5cc' }}>
-                    {(mem.attention_score ?? mem.consolidation_score ?? 0).toFixed(3)}
-                  </div>
-                  <div className="rc-content">{mem.content}</div>
-                </motion.div>
-              ))}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </div>
-  );
-}
-
-function TimelineChart({ timeline }: { timeline: any[] }) {
-  if (!timeline || !timeline.length) return null;
-  return (
-    <div className="dashboard-panel col-span-2">
-      <div className="panel-header"><Database size={18} className="text-teal" /><span>30-Day Access Timeline</span></div>
-      <div className="panel-body h-36">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={timeline}>
-            <defs>
-              <linearGradient id="tealGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="#00e5cc" stopOpacity={0.3}/>
-                <stop offset="95%" stopColor="#00e5cc" stopOpacity={0}/>
-              </linearGradient>
-            </defs>
-            <XAxis dataKey="date" tick={{ fill: '#888', fontSize: 10 }} />
-            <YAxis tick={{ fill: '#888', fontSize: 10 }} />
-            <Tooltip contentStyle={{ background: '#1e2030', border: '1px solid #00e5cc44', borderRadius: 8 }} />
-            <Area type="monotone" dataKey="accesses" stroke="#00e5cc" fill="url(#tealGrad)" strokeWidth={2} />
-          </AreaChart>
-        </ResponsiveContainer>
+      <div className="panel-body max-h-80 overflow-y-auto pr-2 space-y-4">
+        {data?.query ? (
+          <div className="text-sm">
+            <div className="text-slate-500 text-xs mb-1 uppercase tracking-widest font-bold">Latest Intercepted Prompt</div>
+            <div className="bg-black/50 p-4 rounded-xl border border-white/5 font-mono text-teal-300">
+              "{data.query}"
+            </div>
+            <div className="text-slate-500 text-xs mt-4 mb-2 uppercase tracking-widest font-bold">Auto-Injected Context (Memories)</div>
+            {data.memories?.length > 0 ? data.memories.map((m: any, i: number) => (
+              <div key={i} className="flex gap-3 bg-white/5 p-3 rounded-xl border border-white/5 mt-2 text-slate-300 text-sm items-start hover:bg-white/10 transition-colors">
+                <span className="text-[10px] font-bold text-teal-400 bg-teal-400/10 px-2 py-1 rounded font-mono mt-0.5">
+                  {(data.attention_scores?.[i] ?? m.attention_score ?? 0).toFixed(2)}
+                </span>
+                <span className="flex-1">{m.content}</span>
+              </div>
+            )) : (
+              <div className="text-slate-500 italic text-xs">No memories were injected for this prompt.</div>
+            )}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-10 text-slate-500 text-sm">
+            <Activity className="h-8 w-8 mb-3 opacity-20" />
+            <span>Waiting for SDK activity...</span>
+            <span className="text-xs mt-1">Run your python script to see live interception!</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -239,30 +188,31 @@ function PanelSkeleton() {
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const token = localStorage.getItem('nsn-token');
+  const { projectId } = useParams();
+  const token = "local_test_key"; // Bypass auth locally
   const headers = { Authorization: `Bearer ${token}` };
 
   const { data: health } = useQuery({
-    queryKey: ['analytics-health'],
-    queryFn: () => fetch(`${API}/analytics/health`, { headers }).then(r => r.json()),
+    queryKey: ['analytics-health', projectId],
+    queryFn: () => fetch(`${API}/analytics/health?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
     refetchInterval: 30_000,
   });
 
   const { data: usage } = useQuery({
-    queryKey: ['analytics-usage'],
-    queryFn: () => fetch(`${API}/analytics/usage`, { headers }).then(r => r.json()),
+    queryKey: ['analytics-usage', projectId],
+    queryFn: () => fetch(`${API}/analytics/usage?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
     refetchInterval: 60_000,
   });
 
   const { data: sleepStatus } = useQuery({
-    queryKey: ['sleep-status'],
-    queryFn: () => fetch(`${API}/sleep/status`, { headers }).then(r => r.json()),
+    queryKey: ['sleep-status', projectId],
+    queryFn: () => fetch(`${API}/sleep/status?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
     refetchInterval: 60_000,
   });
 
   const { data: timeline } = useQuery({
-    queryKey: ['analytics-timeline'],
-    queryFn: () => fetch(`${API}/analytics/timeline`, { headers }).then(r => r.json()),
+    queryKey: ['analytics-timeline', projectId],
+    queryFn: () => fetch(`${API}/analytics/timeline?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
   });
 
   const triggerSleep = async () => {
@@ -285,11 +235,10 @@ export default function Dashboard() {
       </div>
 
       <div className="dashboard-grid">
+        <LiveSDKLogs projectId={projectId} />
         <MemoryHealthPanel health={health} />
         <SleepStatusPanel sleepStatus={sleepStatus} onTrigger={triggerSleep} />
         <UsagePanel usage={usage} />
-        <WhatWouldRemember />
-        <TimelineChart timeline={timeline ?? []} />
       </div>
     </div>
   );

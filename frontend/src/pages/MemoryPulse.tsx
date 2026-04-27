@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion } from 'framer-motion';
 import * as d3 from 'd3';
+import { useParams } from 'react-router-dom';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/v1';
 const SCORE_COLORS: Record<string, string> = { Core: '#00e5cc', Established: '#4f9cf9', Developing: '#ffb347', Weak: '#ff6b6b' };
@@ -19,14 +20,15 @@ interface MemNode extends d3.SimulationNodeDatum {
 }
 
 export default function MemoryPulse() {
+  const { projectId } = useParams();
   const svgRef = useRef<SVGSVGElement>(null);
   const [selected, setSelected] = useState<MemNode | null>(null);
   const [dim, setDim] = useState({ w: 900, h: 580 });
   const token = localStorage.getItem('nsn-token');
 
   const { data } = useQuery({
-    queryKey: ['memories-pulse'],
-    queryFn: () => fetch(`${API}/memories/retrieve?query=&project_id=default&top_k=100`, {
+    queryKey: ['memories-pulse', projectId],
+    queryFn: () => fetch(`${API}/memories/retrieve?query=&project_id=${projectId || ''}&top_k=100`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(r => r.json()),
     refetchInterval: 30000,

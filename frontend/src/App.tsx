@@ -45,14 +45,14 @@ const App = () => (
           {/* Onboarding */}
           <Route path="/onboarding" element={<Onboarding />} />
           {/* Dashboard routes — all wrapped in DashboardLayout */}
-          <Route path="/dashboard" element={<DashboardLayout><Dashboard /></DashboardLayout>} />
-          <Route path="/dashboard/pulse" element={<DashboardLayout><MemoryPulse /></DashboardLayout>} />
-          <Route path="/dashboard/memories" element={<DashboardLayout><MemoryExplorer /></DashboardLayout>} />
-          <Route path="/dashboard/projects" element={<DashboardLayout><Projects /></DashboardLayout>} />
-          <Route path="/dashboard/keys" element={<DashboardLayout><ApiKeys /></DashboardLayout>} />
-          <Route path="/dashboard/webhooks" element={<DashboardLayout><Webhooks /></DashboardLayout>} />
-          <Route path="/dashboard/benchmarks" element={<DashboardLayout><Benchmarks /></DashboardLayout>} />
-          <Route path="/dashboard/settings" element={<DashboardLayout><Settings /></DashboardLayout>} />
+          <Route path="/dashboard/:projectId" element={<DashboardLayout><Dashboard /></DashboardLayout>} />
+          <Route path="/dashboard/:projectId/pulse" element={<DashboardLayout><MemoryPulse /></DashboardLayout>} />
+          <Route path="/dashboard/:projectId/memories" element={<DashboardLayout><MemoryExplorer /></DashboardLayout>} />
+          <Route path="/dashboard/:projectId/projects" element={<DashboardLayout><Projects /></DashboardLayout>} />
+          <Route path="/dashboard/:projectId/keys" element={<DashboardLayout><ApiKeys /></DashboardLayout>} />
+          <Route path="/dashboard/:projectId/webhooks" element={<DashboardLayout><Webhooks /></DashboardLayout>} />
+          <Route path="/dashboard/:projectId/benchmarks" element={<DashboardLayout><Benchmarks /></DashboardLayout>} />
+          <Route path="/dashboard/:projectId/settings" element={<DashboardLayout><Settings /></DashboardLayout>} />
           {/* Catch-all */}
           <Route path="*" element={<NotFound />} />
         </Routes>

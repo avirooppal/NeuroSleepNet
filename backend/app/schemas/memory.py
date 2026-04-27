@@ -1,12 +1,12 @@
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
 
 class MemoryBase(BaseModel):
     content: str
-    project_id: Optional[uuid.UUID] = None
+    project_id: Optional[Union[uuid.UUID, str]] = None
     session_id: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -35,7 +35,7 @@ class Memory(MemoryBase):
 
 class MemorySearch(BaseModel):
     query: str
-    project_id: Optional[uuid.UUID] = None
+    project_id: Optional[Union[uuid.UUID, str]] = None
     top_k: int = 5
     min_attention_score: float = 0.3
 

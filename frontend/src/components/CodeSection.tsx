@@ -1,10 +1,14 @@
 import { motion } from "framer-motion";
 import { useState } from "react";
 
-const CLOUD_SNIPPET = `import neurosleepnet as nsn
+const LOCAL_SNIPPET = `import neurosleepnet as nsn
 
-# One-time setup — hosted or self-hosted
-nsn.init(api_key="nsn_your_key_here")
+# Initialize locally — no API keys, no cloud dependencies
+nsn.init(
+    project="my-agent-v2",
+    base_url="http://localhost:8000/api",   # local backend
+    offline_cache=True,                        # SQLite fallback if offline
+)
 
 # Drop-in wrap — works with LangChain, OpenAI, HuggingFace, Ollama
 agent = nsn.wrap(your_agent)
@@ -18,29 +22,11 @@ nsn.remember("User prefers Python over JavaScript", importance=0.9)
 # Explicitly retrieve memories (debug / custom injection)
 memories = nsn.recall(query="auth module fixes", top_k=5)
 
-# Export and migrate full memory state
-snapshot = nsn.snapshot()         # → dict
-nsn.restore(snapshot)             # restore on any instance`;
-
-const SELF_HOSTED_SNIPPET = `import neurosleepnet as nsn
-
-# Point to your own backend — no external dependency
-nsn.init(
-    api_key="nsn_your_key_here",
-    base_url="http://localhost:8080",   # self-hosted endpoint
-    project="my-agent-v2",
-    fallback_mode="silent",             # never crash the host agent
-    offline_cache=True,                 # SQLite fallback if API unreachable
-)
-
-agent = nsn.wrap(your_agent)
-
 # Diagnostics — prints latency, quota, cache hits to stdout
 nsn.status()`;
 
 const tabs = [
-  { label: "Hosted", snippet: CLOUD_SNIPPET },
-  { label: "Self-Hosted", snippet: SELF_HOSTED_SNIPPET },
+  { label: "Local Quickstart", snippet: LOCAL_SNIPPET },
 ];
 
 const tokenize = (line: string) => {
@@ -80,8 +66,7 @@ const CodeSection = () => {
             <span className="text-muted-foreground">Everything else is automatic.</span>
           </h2>
           <p className="text-sm text-muted-foreground mb-10 max-w-xl">
-            One key, one wrap. Works with any agent. SDK falls back to local SQLite cache if the API
-            is unreachable — the host agent never breaks.
+            No API keys. No cloud lock-in. Works with any agent. The SDK falls back to a local SQLite cache if the backend is unreachable — the host agent never breaks.
           </p>
         </motion.div>
 
