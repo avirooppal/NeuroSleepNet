@@ -1,0 +1,31 @@
+FROM python:3.12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system packages: Postgres, Redis, Nginx, Supervisor and build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc git curl ca-certificates \
+    postgresql postgresql-contrib redis-server nginx supervisor \
+    libpq-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the repo into the image
+COPY . /app
+
+# Upgrade pip and install Python deps for embed and backend
+RUN python -m pip install --upgrade pip setuptools wheel \
+    && if [ -f /app/services/embed/requirements.txt ]; then pip install --no-cache-dir -r /app/services/embed/requirements.txt; fi \
+    && pip install --no-cache-dir -e /app/backend
+
+# Use repo nginx config if present
+RUN if [ -f /app/infra/nginx/nginx.conf ]; then cp /app/infra/nginx/nginx.conf /etc/nginx/nginx.conf; fi
+
+# Make entrypoint executable
+RUN chmod +x /app/docker/entrypoint.sh || true
+
+# Expose ports: backend, embed, nginx
+EXPOSE 8000 8001 8080
+
+ENTRYPOINT ["/app/docker/entrypoint.sh"]

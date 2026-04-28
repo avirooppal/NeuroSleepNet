@@ -1,3 +1,6 @@
+"""
+Fallback cascade for NeuroSleepNet operations.
+"""
 import logging
 from typing import Callable, Any, Tuple
 import httpx

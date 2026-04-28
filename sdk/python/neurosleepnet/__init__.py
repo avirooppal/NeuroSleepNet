@@ -2,8 +2,8 @@
 NeuroSleepNet SDK — Public API
 
 Required:
-    nsn.init(api_key)     — call once at application startup
-    nsn.wrap(agent)       — call once per agent, drop-in replacement
+    nsn.init(project="my-agent")
+    nsn.wrap(agent)
 
 Optional:
     nsn.remember(content, importance=0.9)
@@ -13,6 +13,7 @@ Optional:
     nsn.status()
     nsn.snapshot()
     nsn.restore(snapshot)
+    nsn.trigger_sleep()
 """
 import json
 import logging
@@ -29,22 +30,22 @@ from .adapters import get_adapter
 from .proxy import TransparentProxy
 from .context import get_model_context_limit
 
+from .local_store import LocalStore
+from .embeddings import EmbeddingManager
+from .local_sleep import LocalSleepEngine
+
 
 # ── Custom Exceptions ──────────────────────────────────────────────────────────
 
-class NSNAuthError(RuntimeError):
-    """Raised when the API key is invalid — detected eagerly at nsn.init()."""
-
-class NSNConnectionError(RuntimeError):
-    """Raised when the API is unreachable and fallback_mode='raise'."""
-
-class NSNInitError(RuntimeError):
-    """Raised when nsn.wrap() or other operations are called before nsn.init()."""
+class NSNAuthError(RuntimeError): pass
+class NSNConnectionError(RuntimeError): pass
+class NSNInitError(RuntimeError): pass
 
 
 # ── Global State ───────────────────────────────────────────────────────────────
 
 _config: Dict[str, Any] = {
+    "mode": "local",  # "local" | "server" | "cloud"
     "api_key": None,
     "project": "default",
     "session_id": None,
@@ -59,10 +60,20 @@ _config: Dict[str, Any] = {
     "telemetry": False,
     "log_level": "info",
     "disabled": False,
+    "data_dir": "~/.neurosleepnet",
+    "embeddings": "local",
+    "min_confidence": 0.35,  # Hard threshold: don't guess if below this
 }
 
+# Server/Cloud mode state
 _client: Optional[NeuroSleepClient] = None
 _cache: Optional[OfflineCache] = None
+
+# Local mode state
+_local_store: Optional[LocalStore] = None
+_embedding_manager: Optional[EmbeddingManager] = None
+_local_sleep: Optional[LocalSleepEngine] = None
+
 _last_retrieval: Dict[str, Any] = {}   # Stores context for explain_last()
 _detected_adapter_name: str = "Unknown"
 
@@ -77,51 +88,39 @@ _WRITE_RATE_LIMIT = 20
 
 def init(
     project: str = "default",
-    api_key: str = "anonymous",
+    mode: str = "local",                 # "local" | "server" | "cloud"
+    api_key: Optional[str] = None,       # Optional for local, required for server/cloud
     session_id: Optional[str] = None,
-    base_url: Optional[str] = None,
+    base_url: Optional[str] = None,      # For server mode
+    data_dir: str = "~/.neurosleepnet",  # Local storage path
+    embeddings: str = "local",           # "local" | "openai" | "none"
+    embedding_model: Optional[str] = None,
+    sleep_interval_hours: float = 6.0,   # Local sleep consolidation frequency
     fallback_mode: str = "silent",       # "silent" | "warn" | "raise"
     max_context_tokens: int = 2048,
     min_memories: int = 3,
     model_context_limit: Optional[int] = None,
     offline_cache: bool = True,
-    pii_detection: bool = True,          # DEFAULT ON. False = conscious opt-out.
+    pii_detection: bool = True,
     memory_ttl_days: Optional[int] = None,
     filter_fn: Optional[Callable] = None,
-    telemetry: bool = False,             # NEVER default True.
+    telemetry: bool = False,
     log_level: str = "info",
     disabled: bool = False,
 ):
     """
     Initialize the NeuroSleepNet SDK.
-
-    Call once at application startup. Immediately validates the API key via
-    GET /v1/ping — fail fast, never surface a bad key 10 minutes into a run.
-
-    Args:
-        api_key:             Required. Validated immediately via ping.
-        project:             Namespace. Memories scoped to project.
-        session_id:          Auto-generated UUID if not provided.
-        fallback_mode:       "silent" | "warn" | "raise"
-        max_context_tokens:  Hard cap on injected memory size per call.
-        min_memories:        Sleep engine never prunes below this floor.
-        model_context_limit: Override model's max context window (tokens).
-        offline_cache:       SQLite fallback at ~/.nsn/cache.db
-        pii_detection:       ON BY DEFAULT. False = conscious opt-out.
-        memory_ttl_days:     Hard deletion after N days. None = no expiry.
-        filter_fn:           Custom callable: filter_fn(content) -> bool
-        telemetry:           Opt-in only. Never sends memory content.
-        log_level:           "debug" | "info" | "warn" | "none"
-        disabled:            Kill-switch. Used for benchmark control groups.
+    Call once at application startup.
     """
-    global _client, _cache, _config
-
-    # API Key is optional for the free tier.
+    global _client, _cache, _local_store, _embedding_manager, _local_sleep, _config
 
     _config.update({
+        "mode": mode,
         "api_key": api_key,
         "project": project,
         "session_id": session_id or str(_uuid.uuid4()),
+        "data_dir": data_dir,
+        "embeddings": embeddings,
         "fallback_mode": fallback_mode,
         "max_context_tokens": max_context_tokens,
         "model_context_limit": model_context_limit,
@@ -138,49 +137,60 @@ def init(
     # Configure logging
     level_map = {"debug": logging.DEBUG, "info": logging.INFO, "warn": logging.WARNING, "none": logging.CRITICAL + 1}
     logging.basicConfig(level=level_map.get(log_level, logging.INFO))
+    logger = logging.getLogger("neurosleepnet")
 
-    kwargs = {"api_key": api_key}
-    if base_url:
-        kwargs["base_url"] = base_url
-    _client = NeuroSleepClient(**kwargs)
+    if mode == "local":
+        _local_store = LocalStore(data_dir=data_dir)
+        _embedding_manager = EmbeddingManager(provider=embeddings, model_name=embedding_model, api_key=api_key)
+        _local_sleep = LocalSleepEngine(_local_store, interval_hours=sleep_interval_hours)
+        _local_sleep.start()
+        print(f"\\n[NSN] NeuroSleepNet Initialized (Local Mode) - Project: {project}\\n")
 
-    if offline_cache:
-        _cache = OfflineCache()
+    elif mode in ("server", "cloud"):
+        if not api_key and mode == "cloud":
+            logger.warning("[NSN] api_key not provided, using 'anonymous'")
+            api_key = "anonymous"
+            
+        kwargs = {"api_key": api_key or "anonymous"}
+        if base_url:
+            kwargs["base_url"] = base_url
+            
+        _client = NeuroSleepClient(**kwargs)
 
-    # ── Project resolution ──────────────────────────────────────────────────
-    try:
-        projects = _client.list_projects()
-        existing = next((p for p in projects if p["name"] == project), None)
-        if existing:
-            _config["project"] = existing["id"]
-        else:
-            # Auto-create project
-            try:
-                new_p = _client.create_project(project)
-                _config["project"] = new_p["id"]
-            except Exception as e:
-                logging.getLogger("neurosleepnet").warning(f"Failed to auto-create project '{project}' via API: {e}. Falling back to name-based ID.")
-                _config["project"] = project
-    except Exception as e:
-        logging.getLogger("neurosleepnet").warning(f"Could not reach API to resolve project '{project}': {e}. Proceeding with name-based ID.")
-        _config["project"] = project
+        if offline_cache:
+            _cache = OfflineCache()
 
-    # Success message with unique dashboard link
-    # The dashboard now supports /dashboard/:projectId where projectId can be UUID or name.
-    print(f"\n[NSN] NeuroSleepNet Initialized! View your live metrics at: http://localhost:3000/dashboard/{_config['project']}\n")
+        try:
+            projects = _client.list_projects()
+            existing = next((p for p in projects if p["name"] == project), None)
+            if existing:
+                _config["project"] = existing["id"]
+            else:
+                try:
+                    new_p = _client.create_project(project)
+                    _config["project"] = new_p["id"]
+                except Exception as e:
+                    logger.warning(f"Failed to auto-create project '{project}' via API: {e}. Falling back to name-based ID.")
+                    _config["project"] = project
+        except Exception as e:
+            logger.warning(f"Could not reach API to resolve project '{project}': {e}. Proceeding with name-based ID.")
+            _config["project"] = project
+
+        print(f"\\n[NSN] NeuroSleepNet Initialized! View your live metrics at: http://localhost:3000/dashboard/{_config['project']}\\n")
+
+    else:
+        raise ValueError(f"Unknown mode: {mode}")
 
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
 def _check_init():
-    if not _client:
-        raise NSNInitError(
-            "nsn.init() must be called before nsn.wrap().\n"
-            "Add nsn.init('your_key') at application startup."
-        )
+    if _config["mode"] == "local" and not _local_store:
+        raise NSNInitError("nsn.init() must be called before making requests.")
+    elif _config["mode"] in ("server", "cloud") and not _client:
+        raise NSNInitError("nsn.init() must be called before making requests.")
 
 def _is_rate_limited() -> bool:
-    """Sliding window rate limiter — returns True if limit exceeded."""
     now = time.monotonic()
     with _write_lock:
         while _write_queue and _write_queue[0] < now - _WRITE_RATE_WINDOW:
@@ -189,21 +199,6 @@ def _is_rate_limited() -> bool:
             return True
         _write_queue.append(now)
         return False
-
-def _check_quota():
-    """Quota check — fires warnings at 80% and 95%. Never blocks main path."""
-    try:
-        usage = _client.get_usage()
-        pct = usage.get("used_pct", 0)
-        limit = usage.get("limit", 0)
-        used = usage.get("used", 0)
-        log = logging.getLogger("neurosleepnet")
-        if pct >= 95:
-            log.warning(f"[NSN] ⚠️ QUOTA CRITICAL: {used}/{limit} ({pct:.0f}%). Upgrade at nsn.ai/billing")
-        elif pct >= 80:
-            log.warning(f"[NSN] ⚠️ Quota warning: {used}/{limit} ({pct:.0f}%). Approaching monthly limit.")
-    except Exception:
-        pass
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -214,82 +209,105 @@ def remember(
     tags: Optional[List[str]] = None,
     ttl_days: Optional[int] = None,
 ):
-    """
-    Manually store a memory with optional importance weighting.
-    High importance memories resist sleep-phase archival.
-    """
     _check_init()
-    _check_quota()
 
     if _config.get("disabled"):
         return None
 
     ttl = ttl_days or _config.get("memory_ttl_days")
 
-    if _is_rate_limited():
-        logging.getLogger("neurosleepnet").debug(
-            f"[NSN] Rate limit reached ({_WRITE_RATE_LIMIT}/{_WRITE_RATE_WINDOW}s). Buffering to cache."
+    if _config["mode"] == "local":
+        try:
+            emb = _embedding_manager.embed_single(content)
+            memory_id = _local_store.store(
+                content=content, 
+                project=_config["project"],
+                session_id=_config["session_id"],
+                tags=tags or [],
+                importance=importance,
+                embedding=emb,
+                ttl_days=ttl
+            )
+            return {"status": "stored_locally", "id": memory_id}
+        except Exception as e:
+            if _config["fallback_mode"] == "raise":
+                raise
+            logging.getLogger("neurosleepnet").warning(f"[NSN] Local remember failed: {e}")
+            return None
+
+    else: # server/cloud
+        if _is_rate_limited():
+            if _cache:
+                _cache.store(content, _config["project"], _config["session_id"], tags, importance)
+                return {"status": "rate_limited_cached_locally"}
+            return None
+
+        def _api_call():
+            return _client.store_memory(
+                content=content,
+                project=_config["project"],
+                tags=tags or [],
+                importance=importance,
+                session_id=_config["session_id"],
+                ttl_days=ttl,
+            )
+
+        def _cache_call():
+            if _cache:
+                _cache.store(content, _config["project"], _config["session_id"], tags, importance)
+                return {"status": "cached_locally"}
+            return None
+
+        res, _ = execute_with_fallback(
+            func=_api_call,
+            cache_retrieve_fn=_cache_call,
+            fallback_mode=_config["fallback_mode"],
         )
-        if _cache:
-            _cache.store(content, _config["project"], _config["session_id"], tags, importance)
-            return {"status": "rate_limited_cached_locally"}
-        return None
-
-    def _api_call():
-        return _client.store_memory(
-            content=content,
-            project=_config["project"],
-            tags=tags or [],
-            importance=importance,
-            session_id=_config["session_id"],
-            ttl_days=ttl,
-        )
-
-    def _cache_call():
-        if _cache:
-            _cache.store(content, _config["project"], _config["session_id"], tags, importance)
-            return {"status": "cached_locally"}
-        return None
-
-    res, _ = execute_with_fallback(
-        func=_api_call,
-        cache_retrieve_fn=_cache_call,
-        fallback_mode=_config["fallback_mode"],
-    )
-    return res
+        return res
 
 
 def recall(
     query: str,
     top_k: int = 5,
 ) -> List[Dict[str, Any]]:
-    """
-    Retrieve the most relevant memories for a query.
-    Uses semantic search + attention reranking.
-    """
     _check_init()
     if _config.get("disabled"):
         return []
 
-    def _api_call():
-        return _client.retrieve(
-            query=query,
-            project=_config["project"],
-            top_k=top_k,
+    if _config["mode"] == "local":
+        try:
+            q_emb = _embedding_manager.embed_single(query)
+            if q_emb:
+                # Pass both query string and embedding for Hybrid Search
+                memories = _local_store.retrieve(query, q_emb, _config["project"], top_k=top_k)
+                # Filter by hard confidence threshold
+                memories = [m for m in memories if m.get("attention_score", 0) >= _config["min_confidence"]]
+            else:
+                memories = _local_store.search_text(query, _config["project"], top_k=top_k)
+            from_cache = False
+        except Exception as e:
+            logging.getLogger("neurosleepnet").warning(f"[NSN] Local recall failed: {e}")
+            memories = []
+            from_cache = False
+    else:
+        def _api_call():
+            return _client.retrieve(
+                query=query,
+                project=_config["project"],
+                top_k=top_k,
+            )
+
+        def _cache_call():
+            if _cache:
+                return _cache.retrieve(_config["project"], limit=top_k)
+            return []
+
+        memories, from_cache = execute_with_fallback(
+            func=_api_call,
+            cache_retrieve_fn=_cache_call,
+            fallback_mode=_config["fallback_mode"],
         )
 
-    def _cache_call():
-        if _cache:
-            return _cache.retrieve(_config["project"], limit=top_k)
-        return []
-
-    memories, from_cache = execute_with_fallback(
-        func=_api_call,
-        cache_retrieve_fn=_cache_call,
-        fallback_mode=_config["fallback_mode"],
-    )
-
-    # Update last retrieval context for explain_last()
     global _last_retrieval
     _last_retrieval = {
         "query": query,
@@ -304,43 +322,33 @@ def forget(
     query: str,
     older_than_days: Optional[int] = None,
 ):
-    """
-    Semantically forget all memories matching the query.
-    Optionally filter to memories older than N days.
-
-    Example:
-        nsn.forget("auth module bug", older_than_days=30)
-    """
     _check_init()
     if _config.get("disabled"):
         return None
 
-    try:
-        return _client.forget_by_query(
-            query=query,
-            project=_config["project"],
-            older_than_days=older_than_days,
-        )
-    except Exception as e:
-        if _config["fallback_mode"] == "raise":
-            raise
-        logging.getLogger("neurosleepnet").warning(f"[NSN] forget() failed: {e}")
-        return None
+    if _config["mode"] == "local":
+        try:
+            deleted = _local_store.forget(query=query, older_than_days=older_than_days, project=_config["project"])
+            return {"deleted": deleted}
+        except Exception as e:
+            if _config["fallback_mode"] == "raise":
+                raise
+            logging.getLogger("neurosleepnet").warning(f"[NSN] Local forget failed: {e}")
+            return None
+    else:
+        try:
+            return _client.forget(
+                query=query,
+                older_than_days=older_than_days,
+            )
+        except Exception as e:
+            if _config["fallback_mode"] == "raise":
+                raise
+            logging.getLogger("neurosleepnet").warning(f"[NSN] forget() failed: {e}")
+            return None
 
 
 def explain_last() -> Dict[str, Any]:
-    """
-    Explain why specific memories were retrieved in the last agent call.
-    Returns the query used, the memories returned, and their attention scores.
-
-    Example output:
-        {
-          "query": "what did the user say about performance?",
-          "retrieved_at": 1718...,
-          "memories": [...],
-          "why": "Memories ranked by attention score = CosineSim×0.5 + Recency×0.2 + ..."
-        }
-    """
     _check_init()
     if not _last_retrieval:
         return {"explanation": "No retrieval has occurred yet in this session."}
@@ -348,7 +356,7 @@ def explain_last() -> Dict[str, Any]:
     memories = _last_retrieval.get("memories", [])
     return {
         "query": _last_retrieval.get("query", ""),
-        "retrieved_at": _last_retrieval.get("retrieved_at"),
+        "retrieved_at": _last_retrieval.get("timestamp"),
         "memories": memories,
         "count": len(memories),
         "why": (
@@ -363,73 +371,66 @@ def explain_last() -> Dict[str, Any]:
     }
 
 
-def status():
-    """
-    Print a full system diagnostics summary to stdout.
+def trigger_sleep():
+    """Manually trigger memory consolidation."""
+    _check_init()
+    if _config["mode"] == "local":
+        return _local_sleep.run_now()
+    else:
+        return _client.trigger_sleep(_config["project"])
 
-    Format (locked):
-    ──────────────────────────────────────────────────
-    ✓  API key        valid  (nsn_...a3f2)
-    ✓  API reachable  43ms   (api.nsn.ai)
-    ...
-    ──────────────────────────────────────────────────
-    """
+
+def status():
     WIDTH = 50
     SEP = "-" * WIDTH
 
-    print(f"\nNeuroSleepNet - System Status")
+    print(f"\\nNeuroSleepNet - System Status")
     print(SEP)
 
-    if not _client:
-        print("[!] SDK not initialized. Run nsn.init('your_key') first.")
-        print(SEP)
-        return
-
-    key = _config.get("api_key", "")
-    masked = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else key[:4] + "..."
-    print(f"[v] API key        valid  ({masked})")
-
-    # API reachability
-    try:
-        t0 = time.time()
-        _client.ping()
-        ms = int((time.time() - t0) * 1000)
-        print(f"[v] API reachable  {ms}ms   (api.nsn.ai)")
-    except Exception as e:
-        print(f"[!] API reachable  UNREACHABLE ({e})")
-
-    # Offline cache
-    if _cache:
-        cache_info = getattr(_cache, 'db_path', '~/.nsn/cache.db')
-        try:
-            count = _cache.count(_config["project"])
-            print(f"[v] Offline cache  active ({cache_info} · {count} memories)")
-        except Exception:
-            print(f"[v] Offline cache  active ({cache_info})")
+    if _config["mode"] == "local":
+        if not _local_store:
+            print("[!] SDK not initialized. Run nsn.init() first.")
+            print(SEP)
+            return
+            
+        print(f"[v] Mode           local")
+        print(f"[v] Storage        {_local_store.db_path}")
+        print(f"[v] Embeddings     {_config['embeddings']} ({_embedding_manager.model_name})")
+        print(f"[v] Sleep Thread   {'running' if _local_sleep and _local_sleep._thread and _local_sleep._thread.is_alive() else 'stopped'}")
     else:
-        print("[-] Offline cache  disabled")
+        if not _client:
+            print("[!] SDK not initialized. Run nsn.init() first.")
+            print(SEP)
+            return
 
-    print("[-] Quota          unavailable (Local mode or API timeout)")
+        key = _config.get("api_key", "")
+        masked = f"{key[:4]}...{key[-4:]}" if len(key) > 8 else key[:4] + "..."
+        print(f"[v] Mode           {_config['mode']}")
+        print(f"[v] API key        valid  ({masked})")
+
+        try:
+            t0 = time.time()
+            _client.ping()
+            ms = int((time.time() - t0) * 1000)
+            print(f"[v] API reachable  {ms}ms   ({_client.base_url})")
+        except Exception as e:
+            print(f"[!] API reachable  UNREACHABLE ({e})")
+
+        if _cache:
+            print(f"[v] Offline cache  active")
+        else:
+            print("[-] Offline cache  disabled")
 
     print("-" * 50)
     print(f"    Project        {_config['project']}")
     print(f"    Session        {_config.get('session_id', 'n/a')[:8]}")
     print(f"    Adapter        {_detected_adapter_name}")
-    print(f"    PII detection  {'enabled' if _config.get('pii_detection', True) else 'DISABLED (opt-out)'}")
-    ttl = _config.get("memory_ttl_days")
-    print(f"    Memory TTL     {f'{ttl} days' if ttl else 'none (no expiry)'}")
     print(f"    Fallback mode  {_config.get('fallback_mode', 'silent')}")
     print(SEP)
     print()
 
 
 def snapshot(path: Optional[str] = None) -> List[Dict[str, Any]]:
-    """
-    Export the full memory state for this project.
-    If path is provided, serialises to a JSON file.
-
-    Use case: staging → prod migration, test fixtures.
-    """
     _check_init()
     memories = recall("", top_k=2000)
     if path:
@@ -447,15 +448,6 @@ def restore(
     *,
     from_file: Optional[str] = None,
 ):
-    """
-    Restore memories from a snapshot dict list or a JSON file exported by snapshot().
-
-    Example:
-        snap = nsn.snapshot()
-        nsn.restore(snap)
-        # or
-        nsn.restore(from_file="backup.json")
-    """
     _check_init()
 
     if from_file:
@@ -483,22 +475,11 @@ def restore(
 
 
 def wrap(agent: Any, **overrides) -> Any:
-    """
-    Wrap an agent transparently with memory injection.
-
-    The wrapped agent is a transparent proxy:
-      - isinstance(wrapped, OriginalClass) → True
-      - wrapped.__class__.__name__ matches original
-      - All call signatures preserved
-
-    Must be called AFTER nsn.init().
-    """
     global _detected_adapter_name
-
     _check_init()
 
     if _config.get("disabled"):
-        return agent  # Control group — return original untouched
+        return agent
 
     fallback_mode = overrides.get("fallback_mode", _config["fallback_mode"])
     model_limit = overrides.get(
@@ -512,21 +493,32 @@ def wrap(agent: Any, **overrides) -> Any:
 
     def _retrieve(query: str):
         try:
-            return recall(query, top_k=top_k)
+            mems = recall(query, top_k=top_k)
+            # Add temporal context to the content
+            now = datetime.now(timezone.utc)
+            for m in mems:
+                try:
+                    created = datetime.strptime(m["created_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                    diff = now - created
+                    if diff.days == 0:
+                        label = "just now" if diff.seconds < 3600 else f"{diff.seconds // 3600}h ago"
+                    else:
+                        label = f"{diff.days}d ago"
+                    m["content"] = f"[Memory ({label})]: {m['content']}"
+                except: pass
+            return mems
         except Exception:
             return []
 
     def _log(query: str, memories: List, response: str):
-        """Store the full interaction as a memory."""
         if not query and not response:
             return
         try:
-            content = f"User: {query}\nAgent: {response}" if query else f"Agent: {response}"
+            content = f"User: {query}\\nAgent: {response}" if query else f"Agent: {response}"
             remember(content=content, tags=["auto-interaction"])
         except Exception:
             pass
 
-    # Let adapter wrap the agent
     augmented = adapter.wrap_call(
         agent=agent,
         retrieve_fn=_retrieve,

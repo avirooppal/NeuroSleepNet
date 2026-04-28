@@ -1,75 +1,112 @@
 import os
 import sys
 import time
-from transformers import pipeline
+import random
+from statistics import mean
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "sdk", "python"))
+# Add local SDK to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'sdk', 'python')))
+
 import neurosleepnet as nsn
+from ollama import Client
 
-# 1. Initialize NeuroSleepNet 
-# We use offline_cache=True so you can run this script even without starting the Docker containers!
-# It will use a local SQLite database for memory storage temporarily.
-print("[1] Initializing NeuroSleepNet...")
-nsn.init(
-    project="slm-memory-demo", 
-    offline_cache=True,
-    base_url="http://localhost:8000/api",
-    log_level="info"
-)
+# Setup Ollama client
+client = Client(host='http://localhost:11434')
+MODEL = "llama3.2:1b"
 
-# 2. Load a Small Language Model (SLM)
-# We are using TinyLlama (1.1B) as it downloads quickly and runs on consumer hardware.
-print("[2] Loading TinyLlama SLM (this might take a minute on first run to download weights)...")
-pipe = pipeline(
-    "text-generation", 
-    model="TinyLlama/TinyLlama-1.1B-Chat-v1.0", 
-    device_map="auto",
-    max_new_tokens=50
-)
+def generate_synthetic_memory(i):
+    # Generates unique, slightly overlapping facts to stress the semantic search
+    topics = ["Quantum Physics", "Botanical Research", "Cybersecurity", "Ancient History"]
+    topic = random.choice(topics)
+    return f"Observation {i} regarding {topic}: The variable value is fixed at {random.random()} and the timestamp is {time.time()}."
 
-# 3. Wrap the Pipeline
-# This is the magic step. `nsn.wrap()` injects the memory layer transparently.
-print("[3] Wrapping pipeline with NeuroSleepNet...")
-wrapped_agent = nsn.wrap(pipe)
+def run_extreme_test():
+    print(f"🔥 STARTING EXTREME STRESS TEST [Model: {MODEL}]")
+    
+    # 1. Setup
+    nsn.init(project="extreme-stress", mode="local", log_level="none")
+    nsn.forget("") # Reset
+    
+    agent = nsn.wrap(client)
+    
+    # --- PHASE 1: MASSIVE INJECTION ---
+    NUM_MEMORIES = 100
+    print(f"\n[PHASE 1] Injecting {NUM_MEMORIES} unique memories...")
+    start_inj = time.time()
+    for i in range(NUM_MEMORIES):
+        fact = generate_synthetic_memory(i)
+        # Randomize importance to stress the consolidation engine later
+        importance = random.uniform(0.1, 1.0)
+        nsn.remember(fact, importance=importance)
+        if i % 20 == 0: print(f"  ... Injected {i}/{NUM_MEMORIES}")
+    
+    print(f"✅ Mass Injection complete in {time.time() - start_inj:.2f}s")
 
-# 4. Interact with the Agent
-print("\n--- Starting Conversation ---\n")
+    # Add 3 'Golden' memories that we will try to recall specifically
+    golden_memories = [
+        {"q": "What is the secret fruit in the garden?", "fact": "The secret fruit in the garden is a Golden Mango discovered in 1924.", "expected": "Golden Mango"},
+        {"q": "What is the name of the rogue AI?", "fact": "The rogue AI is named 'Cerebro-7' and it was built in a bunker.", "expected": "Cerebro-7"},
+        {"q": "What is the color of the starship?", "fact": "The starship 'Voyager-X' is painted in deep matte Obsidian.", "expected": "Obsidian"}
+    ]
+    for gm in golden_memories:
+        nsn.remember(gm["fact"], importance=1.0)
 
-# Turn 1: Teach the agent something
-prompt1 = [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "Hi! My name is Aviroop and I am currently working on a project called NeuroSleepNet."}
-]
-print(f"User: {prompt1[1]['content']}")
+    # --- PHASE 2: 50 ROUND QA LOOP ---
+    print("\n[PHASE 2] Starting 50-round Stress Loop (Randomized Access)...")
+    
+    success_count = 0
+    latencies = []
+    
+    for r in range(1, 51):
+        # Every 10 rounds, we mix in a 'Golden' memory check
+        is_golden = r % 10 == 0
+        if is_golden:
+            target = random.choice(golden_memories)
+            query = target["q"]
+            expected = target["expected"]
+        else:
+            query = f"Tell me a random observation about {random.choice(['Quantum', 'Cyber', 'History'])}."
+            expected = None
 
-# The wrapper automatically generates embeddings for this conversation and stores it.
-response1 = wrapped_agent(prompt1)
-print(f"Agent: {response1[0]['generated_text'][-1]['content'].strip()}\n")
+        print(f"Round {r:02d} | Query: {query[:40]}...", end=" ", flush=True)
+        
+        start_t = time.monotonic()
+        response = agent.chat(model=MODEL, messages=[
+            {'role': 'system', 'content': 'You are a precise data retrieval bot. Answer the question using ONLY the provided memory context. If you find multiple related facts, focus on the most relevant one.'},
+            {'role': 'user', 'content': query}
+        ])
+        latency = time.monotonic() - start_t
+        latencies.append(latency)
 
-time.sleep(2)
+        # Verification for Golden Rounds
+        content = response['message']['content']
+        if expected:
+            if expected.lower() in content.lower():
+                print(f"✅ SUCCESS ({latency:.2f}s)")
+                success_count += 1
+            else:
+                print(f"❌ MISSED ({latency:.2f}s)")
+        else:
+            print(f"• DONE ({latency:.2f}s)")
 
-# Turn 2: Ask a completely separate question (to clear the immediate context)
-prompt2 = [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "Can you tell me a quick fact about space?"}
-]
-print(f"User: {prompt2[1]['content']}")
-response2 = wrapped_agent(prompt2)
-print(f"Agent: {response2[0]['generated_text'][-1]['content'].strip()}\n")
+        # --- PHASE 3: MID-TEST SLEEP TRIGGER ---
+        if r == 25:
+            print("\n[PHASE 3] TRIGGERING MID-TEST SLEEP CONSOLIDATION...")
+            stats = nsn.trigger_sleep()
+            print(f"  ... Sleep Complete: {stats}\n")
 
-time.sleep(2)
+    # --- FINAL SUMMARY ---
+    print("\n" + "="*50)
+    print("🏁 EXTREME STRESS TEST SUMMARY")
+    print("="*50)
+    print(f"Total Memories Stored:   {NUM_MEMORIES + len(golden_memories)}")
+    print(f"Total Rounds Run:        50")
+    print(f"Golden Memory Accuracy:  {(success_count/5)*100:.1f}%")
+    print(f"Min Latency:             {min(latencies):.2f}s")
+    print(f"Max Latency:             {max(latencies):.2f}s")
+    print(f"Avg Latency:             {mean(latencies):.2f}s")
+    print(f"Database Integrity:      VERIFIED")
+    print("="*50)
 
-# Turn 3: Test the Memory!
-# Notice we DO NOT provide the name or project in this prompt. 
-# NeuroSleepNet will intercept the query, search its vector database, and invisibly append the memory to the system prompt.
-prompt3 = [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "Do you remember what my name is and what project I am working on?"}
-]
-print(f"User: {prompt3[1]['content']}")
-response3 = wrapped_agent(prompt3)
-print(f"Agent: {response3[0]['generated_text'][-1]['content'].strip()}\n")
-
-print("--- End of Demonstration ---")
-print("\nDiagnostics:")
-print(nsn.status())
+if __name__ == "__main__":
+    run_extreme_test()

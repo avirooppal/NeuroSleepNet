@@ -1,9 +1,10 @@
 import uuid
-from typing import Annotated, List, Optional
+from typing import Annotated, List, Optional, Union
 import json
 
 from fastapi import APIRouter, Depends, Query, Header, status, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from redis.asyncio import Redis
 
 from ...config import settings
