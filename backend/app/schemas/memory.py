@@ -8,8 +8,8 @@ class MemoryBase(BaseModel):
     content: str
     project_id: Optional[Union[uuid.UUID, str]] = None
     session_id: Optional[str] = None
-    tags: List[str] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="metadata_")
     importance: float = 1.0
     ttl_days: Optional[int] = Field(default=None, description="Hard deletion after N days")
 
@@ -58,6 +58,6 @@ class MemorySearchResult(Memory):
 
 
 class SearchResponse(BaseModel):
-    memories: List[MemorySearchResult]
+    memories: list[MemorySearchResult]
     sleep_last_run: Optional[datetime] = None
     residual_context_applied: bool = False

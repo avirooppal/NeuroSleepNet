@@ -16,27 +16,24 @@ const DashboardLayout = ({ children }: { children: React.ReactNode }) => {
     { to: `/dashboard/${projectId}/pulse`,       icon: Activity,        label: "Memory Pulse" },
     { to: `/dashboard/${projectId}/memories`,    icon: Database,        label: "Memory Explorer" },
     { to: `/dashboard/${projectId}/projects`,    icon: FolderOpen,      label: "Projects" },
-    { to: `/dashboard/${projectId}/keys`,        icon: Key,             label: "API Keys" },
-    { to: `/dashboard/${projectId}/webhooks`,    icon: Webhook,         label: "Webhooks" },
     { to: `/dashboard/${projectId}/benchmarks`,  icon: BarChart2,       label: "Benchmarks" },
     { to: `/dashboard/${projectId}/settings`,    icon: Settings,        label: "Settings" },
   ];
 
   return (
     <div className="min-h-screen bg-background flex flex-col md:flex-row">
-      <aside className="w-full md:w-60 border-r border-white/10 bg-black/30 p-5 flex flex-col relative z-20 shrink-0">
-        <div className="flex items-center gap-2 mb-8">
-          <Brain className="h-5 w-5 text-primary" />
-          <Link to="/" className="font-heading text-base font-bold tracking-wide text-white">NeuroSleepNet</Link>
+      <aside className="w-full md:w-64 border-r border-zinc-900 bg-black p-8 flex flex-col relative z-20 shrink-0">
+        <div className="flex items-center gap-2 mb-12">
+          <Link to="/" className="font-heading text-lg font-black tracking-tighter text-white uppercase">NeuroSleepNet</Link>
         </div>
         <nav className="flex-1 space-y-0.5">
           {NAV_ITEMS.map(({ to, icon: Icon, label }) => {
             const active = location.pathname === to;
             return (
-              <Link key={to} to={to} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-150 ${
+              <Link key={to} to={to} className={`flex items-center gap-3 px-3 py-2.5 rounded-none text-xs transition-all duration-150 uppercase tracking-widest ${
                 active
-                  ? "bg-[#00e5cc]/10 text-[#00e5cc] border border-[#00e5cc]/20"
-                  : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                  ? "bg-white text-black font-bold"
+                  : "text-zinc-500 hover:text-white"
               }`}>
                 <Icon className="h-4 w-4 shrink-0" />
                 {label}

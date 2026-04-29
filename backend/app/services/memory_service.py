@@ -151,16 +151,21 @@ class MemoryService:
             
             # Simple manual score calculation to use custom weights
             # AttentionScore = w1 * Similarity + w2 * Recency + w3 * Consolidation
+            # AttentionScore = w1*Sim + w2*Recency + w3*Consolidation + w4*Feedback + w5*Importance
+            # Standard weights: 0.4, 0.1, 0.2, 0.2, 0.1
             attention_score = (
-                (weights.get("w1", 0.5) * float(similarity)) +
-                (weights.get("w2", 0.2) * float(recency_weight)) +
-                (weights.get("w3", 0.2) * float(mem.consolidation_score))
+                (weights.get("w1", 0.4) * float(similarity)) +
+                (weights.get("w2", 0.1) * float(recency_weight)) +
+                (weights.get("w3", 0.2) * float(mem.consolidation_score)) +
+                (weights.get("w4", 0.2) * float((mem.feedback_score + 1.0) / 2.0)) +
+                (weights.get("w5", 0.1) * float(min(1.0, mem.importance / 2.0)))
             )
             
             if attention_score >= min_attention_score:
+                now_utc = datetime.now(timezone.utc)
                 if not dry_run:
                     mem.access_count += 1
-                    mem.last_accessed_at = datetime.now(timezone.utc)
+                    mem.last_accessed_at = now_utc
                 
                 # Decrypt content in-memory for response, without committing decrypted state
                 try:
@@ -169,7 +174,6 @@ class MemoryService:
                     decrypted_content = mem.content
                 
                 # Check 48h mini-consolidation fallback
-                now_utc = datetime.now(timezone.utc)
                 if not dry_run:
                     last_col = mem.last_consolidated_at or mem.created_at
                     if (now_utc - last_col).total_seconds() > 172800: # 48 hours
@@ -177,9 +181,6 @@ class MemoryService:
                         mem.consolidation_score = min(1.0, mem.consolidation_score + 0.1)
                         mem.last_consolidated_at = now_utc
 
-                mem.access_count += 1
-                mem.last_accessed_at = now_utc
-                
                 mem_dict = {
                     "id": mem.id,
                     "user_id": mem.user_id,
@@ -193,6 +194,7 @@ class MemoryService:
                     "last_accessed_at": mem.last_accessed_at,
                     "last_consolidated_at": mem.last_consolidated_at,
                     "consolidation_score": mem.consolidation_score,
+                    "feedback_score": mem.feedback_score,
                     "access_count": mem.access_count,
                     "status": mem.status,
                     "expires_at": mem.expires_at,
@@ -216,17 +218,124 @@ class MemoryService:
     async def forget_by_query(
         session: AsyncSession,
         user_id: uuid.UUID,
-        query: str
+        query: str,
+        older_than_days: Optional[int] = None
     ) -> int:
-        memories = await MemoryService.search_memories(session, user_id, uuid.UUID(int=0), query, top_k=5)
-        # Archive top matches
+        """
+        Semantic forget: find memories matching query and mark them as deleted.
+        """
+        # We use a lower threshold for forgetting to be thorough
+        memories = await MemoryService.search_memories(
+            session=session,
+            user_id=user_id,
+            project_id=uuid.UUID(int=0), # Global search if project not specified
+            query=query,
+            top_k=50,
+            min_attention_score=0.25,
+            dry_run=True
+        )
+        
         count = 0
-        for m in memories:
-            mem = m["memory"]
-            mem.status = "archived"
-            count += 1
+        now = datetime.now(timezone.utc)
+        for m_res in memories:
+            m_id = m_res["memory"]["id"]
+            
+            # Re-fetch the model instance to update it
+            stmt = select(Memory).where(Memory.id == m_id, Memory.user_id == user_id)
+            res = await session.execute(stmt)
+            mem = res.scalar_one_or_none()
+            
+            if mem:
+                if older_than_days:
+                    age = now - mem.created_at
+                    if age.days < older_than_days:
+                        continue
+                
+                mem.status = "deleted"
+                count += 1
+        
         await session.commit()
         return count
+
+    @staticmethod
+    async def apply_feedback(
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        memory_id: uuid.UUID,
+        helpful: bool
+    ) -> bool:
+        stmt = select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id)
+        res = await session.execute(stmt)
+        mem = res.scalar_one_or_none()
+        if not mem:
+            return False
+        
+        # Adjust feedback_score: +/- 0.1 per signal, clamped to [-1.0, 1.0]
+        adjustment = 0.1 if helpful else -0.1
+        mem.feedback_score = max(-1.0, min(1.0, mem.feedback_score + adjustment))
+        
+        # Also bump/decay consolidation score slightly
+        mem.consolidation_score = max(0.0, min(1.0, mem.consolidation_score + (adjustment * 0.5)))
+        
+        await session.commit()
+        return True
+
+    @staticmethod
+    async def pin_memory(
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        memory_id: uuid.UUID
+    ) -> bool:
+        stmt = select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id)
+        res = await session.execute(stmt)
+        mem = res.scalar_one_or_none()
+        if not mem:
+            return False
+        
+        tags = list(mem.tags)
+        if "pinned" not in tags:
+            mem.tags = tags + ["pinned"]
+            mem.consolidation_score = 1.0 # Pinned memories are permanent
+        
+        await session.commit()
+        return True
+
+    @staticmethod
+    async def unpin_memory(
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        memory_id: uuid.UUID
+    ) -> bool:
+        stmt = select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id)
+        res = await session.execute(stmt)
+        mem = res.scalar_one_or_none()
+        if not mem:
+            return False
+        
+        tags = list(mem.tags)
+        if "pinned" in tags:
+            tags.remove("pinned")
+            mem.tags = tags
+            mem.consolidation_score = 0.5 # Reset to default
+        
+        await session.commit()
+        return True
+
+    @staticmethod
+    async def delete_memory(
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        memory_id: uuid.UUID
+    ) -> bool:
+        stmt = select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id)
+        res = await session.execute(stmt)
+        mem = res.scalar_one_or_none()
+        if not mem:
+            return False
+        
+        await session.delete(mem)
+        await session.commit()
+        return True
 
 
 memory_service = MemoryService()

@@ -12,8 +12,6 @@ import Dashboard from "./pages/Dashboard.tsx";
 import MemoryPulse from "./pages/MemoryPulse.tsx";
 import MemoryExplorer from "./pages/MemoryExplorer.tsx";
 import Projects from "./pages/Projects.tsx";
-import ApiKeys from "./pages/ApiKeys.tsx";
-import Webhooks from "./pages/Webhooks.tsx";
 import Benchmarks from "./pages/Benchmarks.tsx";
 import Settings from "./pages/Settings.tsx";
 import DashboardLayout from "./components/DashboardLayout.tsx";
@@ -46,11 +44,10 @@ const App = () => (
           <Route path="/onboarding" element={<Onboarding />} />
           {/* Dashboard routes — all wrapped in DashboardLayout */}
           <Route path="/dashboard/:projectId" element={<DashboardLayout><Dashboard /></DashboardLayout>} />
+          <Route path="/p/:projectId" element={<DashboardLayout><Dashboard /></DashboardLayout>} />
           <Route path="/dashboard/:projectId/pulse" element={<DashboardLayout><MemoryPulse /></DashboardLayout>} />
           <Route path="/dashboard/:projectId/memories" element={<DashboardLayout><MemoryExplorer /></DashboardLayout>} />
           <Route path="/dashboard/:projectId/projects" element={<DashboardLayout><Projects /></DashboardLayout>} />
-          <Route path="/dashboard/:projectId/keys" element={<DashboardLayout><ApiKeys /></DashboardLayout>} />
-          <Route path="/dashboard/:projectId/webhooks" element={<DashboardLayout><Webhooks /></DashboardLayout>} />
           <Route path="/dashboard/:projectId/benchmarks" element={<DashboardLayout><Benchmarks /></DashboardLayout>} />
           <Route path="/dashboard/:projectId/settings" element={<DashboardLayout><Settings /></DashboardLayout>} />
           {/* Catch-all */}

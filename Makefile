@@ -35,11 +35,15 @@ logs:
 test:
 	cd backend && uv run pytest
 
+test-integration:
+	uv run python tests/integration/test_governance.py
+	uv run python tests/integration/test_dashboard.py
+
 migrate:
 	cd backend && uv run alembic upgrade head
 
 seed:
-	cd backend && uv run python infra/scripts/seed_demo.py
+	cd backend && uv run python ../infra/scripts/seed_demo.py
 
 clean:
 	rm -rf backend/.venv

@@ -26,6 +26,8 @@ class Memory(Base):
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     tags: Mapped[list] = mapped_column(JSONB, default=list)
     consolidation_score: Mapped[float] = mapped_column(Float, default=0.5)  # 0.0 -> pruned, 1.0 -> permanent
+    feedback_score: Mapped[float] = mapped_column(Float, default=0.0)       # -1.0 -> negative, 1.0 -> positive
+    importance: Mapped[float] = mapped_column("importance_weight", Float, default=1.0) # 0.0 -> trivial, 2.0 -> critical
     access_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String, default="active")  # 'active' | 'archived' | 'pruned'
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

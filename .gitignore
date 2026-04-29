@@ -91,6 +91,11 @@ secrets/
 *.sqlite3
 # NSN offline cache
 .nsn/
+# Test/Benchmark temporary data
+test_dashboard_data/
+test_lc_data/
+portability_demo/
+benchmark_data/
 # Celery scheduler state
 celerybeat-schedule
 celerybeat-schedule-wal
@@ -168,10 +173,7 @@ logs/
 # ----------------------------------------------------------
 sdk/python/uv.lock
 
-# ----------------------------------------------------------
 # Internal planning / scratch docs (not for public repo)
 # ----------------------------------------------------------
 RUNBOOK.md
-plan.md
-PLAN.md
 FINAL_OVERVIEW.md

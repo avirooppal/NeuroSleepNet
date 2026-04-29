@@ -1,8 +1,11 @@
 import uuid
-from typing import Annotated, List, Optional, Union
+import logging
+from typing import Annotated, Any, Dict, List, Optional, Union
 import json
 
-from fastapi import APIRouter, Depends, Query, Header, status, HTTPException
+logger = logging.getLogger(__name__)
+
+from fastapi import APIRouter, Depends, Query, Header, status, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from redis.asyncio import Redis
@@ -45,93 +48,6 @@ async def _resolve_project_id(project_id_raw: Union[uuid.UUID, str], user_id: uu
     return project.id
 
 
-async def create_memory(
-    memory_in: memory_schema.MemoryCreate,
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: AsyncSession = Depends(get_db),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
-):
-    """
-    Store a new memory. Idempotency-Key header prevents duplicate writes on retry.
-    Webhook is enqueued AFTER db.commit() — never before.
-    """
-    # ── Resolve Project ID ──────────────────────────────────────────────────
-    actual_project_id = None
-    if memory_in.project_id:
-        actual_project_id = await _resolve_project_id(memory_in.project_id, current_user.id, db)
-    # ── Idempotency check ─────────────────────────────────────────────────────
-    if idempotency_key:
-        try:
-            redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
-            cache_key = f"idemp:{current_user.id}:{idempotency_key}"
-            cached = await redis.get(cache_key)
-            if cached:
-                return json.loads(cached)
-        except Exception:
-            pass  # Redis failure must never kill the write path
-
-    # ── PII redaction ─────────────────────────────────────────────────────────
-    safe_content = redact_pii(memory_in.content)
-
-    # ── Write to DB ───────────────────────────────────────────────────────────
-    res = await memory_service.create_memory(
-        session=db,
-        user=current_user,
-        content=safe_content,
-        project_id=actual_project_id,
-        session_id=memory_in.session_id,
-        tags=memory_in.tags,
-        metadata=memory_in.metadata,
-        importance=memory_in.importance,
-        ttl_days=memory_in.ttl_days,
-    )
-    # DB commit happens inside create_memory — res is now persisted.
-
-    # ── Cache idempotency key (24h) ───────────────────────────────────────────
-    if idempotency_key:
-        try:
-            redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
-            dump = {
-                "id": str(res.id),
-                "user_id": str(res.user_id),
-                "project_id": str(res.project_id) if res.project_id else None,
-                "session_id": res.session_id,
-                "content": res.content,
-                "tags": res.tags,
-                "consolidation_score": res.consolidation_score,
-                "access_count": res.access_count,
-                "status": res.status,
-                "created_at": res.created_at.isoformat(),
-            }
-            await redis.set(
-                f"idemp:{current_user.id}:{idempotency_key}",
-                json.dumps(dump),
-                ex=86400,
-            )
-        except Exception:
-            pass  # Idempotency cache failure is non-fatal
-
-    # ── Enqueue async embedding (embed queue) ─────────────────────────────────
-    celery_app.send_task(
-        "tasks.embed.generate",
-        kwargs={"memory_id": str(res.id)},
-    )
-
-    # ── Enqueue webhook AFTER commit is confirmed ─────────────────────────────
-    celery_app.send_task(
-        "tasks.webhooks.deliver",
-        kwargs={
-            "event": "memory.stored",
-            "memory_id": str(res.id),
-            "project_id": str(res.project_id) if res.project_id else "global",
-            "timestamp": res.created_at.isoformat(),
-            "extra": {"tags": res.tags},
-        },
-    )
-
-    return res
-
-
 @router.post("/batch", response_model=List[memory_schema.Memory], status_code=status.HTTP_201_CREATED)
 async def create_memory_batch(
     memories_in: List[memory_schema.MemoryCreate],
@@ -162,10 +78,6 @@ async def create_memory_batch(
             ttl_days=mem.ttl_days,
         )
         created.append(res)
-
-    # Batch embedding — single efficient call to embed queue
-    memory_ids = [str(m.id) for m in created]
-    celery_app.send_task("tasks.embed.batch_generate", kwargs={"memory_ids": memory_ids})
 
     return created
 
@@ -220,7 +132,6 @@ async def remember_important(
         tags=tags or ["manual-injection"],
         importance=importance,
     )
-    celery_app.send_task("tasks.embed.generate", kwargs={"memory_id": str(res.id)})
     return res
 
 
@@ -252,6 +163,91 @@ async def delete_memory(
 ):
     """Hard-delete a single memory by ID."""
     return await memory_service.delete_memory(db, current_user.id, memory_id)
+
+
+@router.post("/", status_code=status.HTTP_201_CREATED)
+async def store_memory(
+    memory_in: memory_schema.MemoryCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    request: Request = None
+):
+    """Generic memory storage (maps to nsn.remember() in SDK)."""
+    try:
+        # Resolve project_id if string provided
+        p_id = None
+        if memory_in.project_id:
+            p_id = await _resolve_project_id(memory_in.project_id, current_user.id, db)
+
+        res = await memory_service.create_memory(
+            session=db,
+            user=current_user,
+            content=memory_in.content,
+            project_id=p_id,
+            tags=memory_in.tags,
+            importance=memory_in.importance,
+            session_id=memory_in.session_id,
+            ttl_days=memory_in.ttl_days
+        )
+        return {
+            "id": str(res.id),
+            "user_id": str(res.user_id),
+            "content": res.content,
+            "tags": res.tags or [],
+            "metadata": dict(res.metadata_ or {}),
+            "importance": res.importance,
+            "status": res.status,
+            "created_at": res.created_at.isoformat() if res.created_at else None,
+            "last_accessed_at": res.last_accessed_at.isoformat() if res.last_accessed_at else None,
+            "consolidation_score": res.consolidation_score,
+            "access_count": res.access_count,
+            "session_id": res.session_id,
+            "project_id": str(res.project_id) if res.project_id else None
+        }
+    except Exception as e:
+        logger.exception(f"FAIL in store_memory: {e}")
+        raise
+
+
+@router.post("/feedback")
+async def apply_feedback(
+    feedback: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reinforce or downweight a memory based on feedback."""
+    memory_id = uuid.UUID(feedback["memory_id"]) if isinstance(feedback["memory_id"], str) else feedback["memory_id"]
+    helpful = feedback["helpful"]
+    ok = await memory_service.apply_feedback(db, current_user.id, memory_id, helpful)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"status": "success"}
+
+
+@router.post("/{memory_id}/pin")
+async def pin_memory(
+    memory_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a memory as pinned (immutable, always recalled)."""
+    ok = await memory_service.pin_memory(db, current_user.id, memory_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"status": "success"}
+
+
+@router.post("/{memory_id}/unpin")
+async def unpin_memory(
+    memory_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove the pinned status from a memory."""
+    ok = await memory_service.unpin_memory(db, current_user.id, memory_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"status": "success"}
 
 
 @router.get("/explain_last")

@@ -10,7 +10,7 @@ import threading
 from typing import Any, Dict, List
 
 from .base import AbstractAdapter
-from ..context import safe_inject, build_injection_prefix, estimate_tokens
+from ..context import safe_inject, build_context, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class OllamaAdapter(AbstractAdapter):
         if not safe_mems:
             return messages
 
-        prefix = build_injection_prefix(safe_mems)
+        prefix = build_context(safe_mems)
         injected = list(messages)  # Copy — never mutate original
 
         # Prepend system message (Ollama supports role=system)
@@ -66,20 +66,43 @@ class OllamaAdapter(AbstractAdapter):
         retrieve_fn,
         log_fn,
         fallback_mode: str = "silent",
-        model_context_limit: int = 8_192,  # Ollama defaults vary — 8k is conservative
+        model_context_limit: int = 8_192,
+        strict: bool = False,
+        model_strength: str = "STRONG"
     ):
         original_chat = agent.chat
 
         def new_chat(*args, **kwargs):
             try:
                 messages = list(kwargs.get("messages", args[1] if len(args) > 1 else []))
-                query = " ".join(
-                    str(m.get("content", "")) for m in messages
-                    if m.get("role") == "user"
-                )[-500:]
+                
+                # Extract query from last user message
+                query = ""
+                if messages:
+                    last_msg = messages[-1]
+                    if isinstance(last_msg, dict) and last_msg.get("role") == "user":
+                        query = last_msg.get("content", "")
+                    elif hasattr(last_msg, "role") and getattr(last_msg, "role") == "user":
+                        query = getattr(last_msg, "content", "")
 
                 memories = retrieve_fn(query) if query else []
+                if memories:
+                    print(f"DEBUG: [NSN] Injecting {len(memories)} memories into prompt.")
                 injected_messages = self.inject_memory(messages, memories, model_context_limit)
+                
+                # --- STRICT MODE ENFORCEMENT ---
+                if strict:
+                    # Override options for deterministic behavior
+                    options = kwargs.get("options", {})
+                    options["temperature"] = 0.0
+                    options["seed"] = 42
+                    kwargs["options"] = options
+                    
+                    # Force strict system prompting if not already there
+                    if injected_messages and injected_messages[0]["role"] == "system":
+                        strict_guard = "\n\nCRITICAL: Answer ONLY using the provided memory context. If the answer is not in the context, say 'NOT FOUND'."
+                        if strict_guard not in injected_messages[0]["content"]:
+                            injected_messages[0]["content"] += strict_guard
 
                 stream = kwargs.get("stream", False)
                 if stream:
@@ -103,6 +126,15 @@ class OllamaAdapter(AbstractAdapter):
 
                 kwargs["messages"] = injected_messages
                 response = original_chat(*args, **kwargs)
+                
+                # --- VISIBILITY HOOK ---
+                # Inject retrieved context into response object if possible
+                if isinstance(response, dict):
+                    response["_nsn_context"] = memories
+                else:
+                    try: setattr(response, "_nsn_context", memories)
+                    except: pass
+
                 log_fn(query, memories, self.extract_response(response))
                 return response
 

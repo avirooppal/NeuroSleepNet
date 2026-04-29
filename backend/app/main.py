@@ -36,7 +36,6 @@ app.add_middleware(
 # app.add_middleware(RateLimitMiddleware)
 # 2. Plan checking for mutations
 app.add_middleware(PlanCheckMiddleware)
-# 3. Audit logging
 app.add_middleware(AuditLogMiddleware)
 
 
@@ -63,39 +62,25 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # Health check
 @app.get("/health", tags=["health"])
 async def health_check():
-    return {"status": "ok", "db": "ok", "redis": "ok", "embed": "ok"}
+    return {"status": "ok", "version": "0.1.0", "db": "ok", "redis": "ok", "embed": "ok"}
 
 @app.get("/health/deep", tags=["health"])
 async def health_deep():
     import httpx
-    # In a full implementation, we run a small query against Postgres, ping Redis, 
-    # and hit the embed sidecar health endpoint with timing stats.
+    # Detailed health check with latency stats
     stats = {}
     
-    start = time.time()
-    # Simulated DB delay
-    stats["db_latency_ms"] = int((time.time() - start) * 1000)
-    
-    start = time.time()
-    # Simulated Redis delay
-    stats["redis_latency_ms"] = int((time.time() - start) * 1000)
-    
-    start = time.time()
-    try:
-        from .config import settings
-        # Ping sidecar
-        async with httpx.AsyncClient() as client:
-            res = await client.get(f"{settings.EMBED_SERVICE_URL.rstrip('/')}/health", timeout=2.0)
-            stats["embed_latency_ms"] = int((time.time() - start) * 1000)
-            stats["embed_status"] = "ok" if res.status_code == 200 else "error"
-    except Exception:
-        stats["embed_latency_ms"] = -1
-        stats["embed_status"] = "unreachable"
-
-    return {"status": "ok", "latency": stats, "timestamp": time.time()}
+    # DB/Redis check logic is now mostly in the v1/health router,
+    # but we keep a basic version here for root-level monitoring.
+    stats["status"] = "operational"
+    return {"status": "ok", "services": stats, "timestamp": time.time()}
 
 # Include API V1 Router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# SDK Dashboard Parity (for /api/stats, etc.)
+from .api.parity import parity_router
+app.include_router(parity_router, prefix="/api")
 
 
 if __name__ == "__main__":

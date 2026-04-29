@@ -185,3 +185,102 @@ async def memory_diff(
         "archived": archived,
         "net_change": created - archived,
     }
+
+
+@router.get("/stats")
+async def get_project_stats(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Project-level statistics for the SDK get_stats() call.
+    Returns counts, health score, and anomaly flags.
+    """
+    import uuid
+    try:
+        pid = uuid.UUID(project_id)
+    except ValueError:
+        # Resolve project name to ID
+        from ...models.project import Project
+        stmt = select(Project).where(Project.user_id == current_user.id, Project.name == project_id)
+        res = await db.execute(stmt)
+        proj = res.scalars().first()
+        if not proj:
+            return {"error": "Project not found"}
+        pid = proj.id
+    
+    # Total active memories
+    active_q = select(func.count(Memory.id)).where(
+        Memory.user_id == current_user.id,
+        Memory.project_id == pid,
+        Memory.status == "active"
+    )
+    active = await db.scalar(active_q) or 0
+    
+    # Archived memories
+    archived_q = select(func.count(Memory.id)).where(
+        Memory.user_id == current_user.id,
+        Memory.project_id == pid,
+        Memory.status == "archived"
+    )
+    archived = await db.scalar(archived_q) or 0
+    
+    # Avg consolidation score
+    avg_score_q = select(func.avg(Memory.consolidation_score)).where(
+        Memory.user_id == current_user.id,
+        Memory.project_id == pid,
+        Memory.status == "active"
+    )
+    avg_score = await db.scalar(avg_score_q) or 0.0
+    
+    # Health score (0-1)
+    health_score = round(min(1.0, float(avg_score) * 1.2), 2)
+    
+    return {
+        "project": project_id,
+        "total_memories": active,
+        "archived": archived,
+        "avg_consolidation_score": round(float(avg_score), 3),
+        "health_score": health_score,
+        "status": "healthy" if health_score > 0.4 else "fragmented"
+    }
+
+
+@router.get("/attention")
+async def attention_distribution(
+    project_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Recalled memory type distribution for the Attention Heatmap.
+    Analyses audit logs for 'memory.retrieved' actions.
+    """
+    from ...models.audit_log import AuditLog
+    
+    # Query last 100 retrieval events
+    base = [AuditLog.user_id == current_user.id, AuditLog.action == "memory.retrieved"]
+    q = select(AuditLog.metadata_).where(*base).order_by(AuditLog.created_at.desc()).limit(100)
+    
+    result = await db.execute(q)
+    rows = result.fetchall()
+    
+    distribution = {"episodic": 0, "semantic": 0, "procedural": 0, "user": 0, "agent": 0}
+    
+    for row in rows:
+        meta = row[0] or {}
+        memories = meta.get("memories", [])
+        for mem in memories:
+            m_type = mem.get("type", "episodic")
+            if m_type in distribution:
+                distribution[m_type] += 1
+            else:
+                distribution["episodic"] += 1 # Default fallback
+                
+    # Format for Recharts / Heatmap
+    return [
+        {"type": k.capitalize(), "recalls": v} 
+        for k, v in distribution.items() 
+        if v > 0 or k in ["episodic", "semantic"]
+    ]

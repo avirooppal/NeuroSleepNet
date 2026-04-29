@@ -20,23 +20,49 @@ import threading
 from typing import Any, Dict, List
 
 from .base import AbstractAdapter
-from ..context import safe_inject, build_injection_prefix, estimate_tokens
+from ..context import safe_inject, build_context, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
 # ── Try LangChain imports ──────────────────────────────────────────────────────
 
 try:
-    from langchain.callbacks.base import BaseCallbackHandler
-    from langchain.schema.agent import AgentFinish
+    # 1. Try modern langchain_core
+    try:
+        from langchain_core.callbacks import BaseCallbackHandler
+        from langchain_core.agents import AgentFinish
+        from langchain_core.memory import BaseMemory as BaseChatMemory
+    except ImportError:
+        # 2. Try legacy langchain
+        try:
+            from langchain.callbacks.base import BaseCallbackHandler
+            from langchain.schema.agent import AgentFinish
+            from langchain.memory import BaseChatMemory
+        except ImportError:
+            # 3. Try community/schema locations
+            try:
+                from langchain_community.callbacks import BaseCallbackHandler
+                from langchain_core.agents import AgentFinish
+                from langchain_core.memory import BaseMemory as BaseChatMemory
+            except ImportError:
+                # 4. Total fallback (stubs)
+                raise ImportError("LangChain base classes not found")
     _HAS_LANGCHAIN = True
 except ImportError:
     _HAS_LANGCHAIN = False
-    BaseCallbackHandler = object  # Fallback base class
+    class BaseCallbackHandler:
+        def __init__(self, *args, **kwargs): pass
+    class BaseChatMemory:
+        def __init__(self, *args, **kwargs): pass
+    class AgentFinish:
+        def __init__(self, *args, **kwargs): pass
 
 try:
-    from langchain.agents import AgentExecutor as _AgentExecutor
-    _HAS_AGENT_EXECUTOR = True
+    try:
+        from langchain.agents import AgentExecutor as _AgentExecutor
+    except ImportError:
+        _AgentExecutor = None
+    _HAS_AGENT_EXECUTOR = _AgentExecutor is not None
 except ImportError:
     _AgentExecutor = None
     _HAS_AGENT_EXECUTOR = False
@@ -61,8 +87,15 @@ if _HAS_LANGCHAIN:
         def on_tool_end(self, output: str, **kwargs: Any) -> None:
             """Store each tool observation — often the richest context."""
             try:
+                import nsn
                 self._observations.append(output)
-                self.log_fn("", [], f"[Tool observation] {output[:500]}")
+                # Store as procedural memory for cross-session reasoning
+                nsn.remember(
+                    content=f"Tool output: {output}",
+                    type="procedural",
+                    importance=0.6,
+                    tags=["tool_output"]
+                )
             except Exception:
                 pass
 
@@ -110,7 +143,7 @@ class LangChainCallbackAdapter(AbstractAdapter):
         if not safe_mems:
             return input_data
 
-        prefix = build_injection_prefix(safe_mems)
+        prefix = build_context(safe_mems)
         if isinstance(input_data, dict) and "input" in input_data:
             result = dict(input_data)
             result["input"] = f"{prefix}\n\n{input_data['input']}"
@@ -122,7 +155,7 @@ class LangChainCallbackAdapter(AbstractAdapter):
             return str(response.get("output", response))
         return str(response)
 
-    def wrap_call(self, agent: Any, retrieve_fn, log_fn, fallback_mode="silent", model_context_limit=4096):
+    def wrap_call(self, agent: Any, retrieve_fn, log_fn, fallback_mode="silent", model_context_limit=4096, strict: bool = False, model_strength: str = "STRONG"):
         original_invoke = agent.invoke
 
         def new_invoke(input_data, config=None, **kwargs):
@@ -182,7 +215,7 @@ class LCELAdapter(AbstractAdapter):
         if not safe_mems:
             return input_data
 
-        prefix = build_injection_prefix(safe_mems)
+        prefix = build_context(safe_mems)
         if isinstance(input_data, str):
             return f"{prefix}\n\n{input_data}"
         if isinstance(input_data, dict):
@@ -198,7 +231,7 @@ class LCELAdapter(AbstractAdapter):
             return response.content
         return str(response)
 
-    def wrap_call(self, agent: Any, retrieve_fn, log_fn, fallback_mode="silent", model_context_limit=4096):
+    def wrap_call(self, agent: Any, retrieve_fn, log_fn, fallback_mode="silent", model_context_limit=4096, strict: bool = False, model_strength: str = "STRONG"):
         original_invoke = agent.invoke
         original_stream = agent.stream
 
@@ -324,17 +357,61 @@ class LangChainAdapter(AbstractAdapter):
     def extract_response(self, *a, **kw):
         pass
 
-    def wrap_call(self, agent, retrieve_fn, log_fn, fallback_mode="silent", model_context_limit=4096):
+    def wrap_call(self, agent, retrieve_fn, log_fn, fallback_mode="silent", model_context_limit=4096, strict=False, model_strength="STRONG"):
         # Route to correct tier
         if LangChainCallbackAdapter.detect(agent):
             return LangChainCallbackAdapter().wrap_call(
-                agent, retrieve_fn, log_fn, fallback_mode, model_context_limit
+                agent, retrieve_fn, log_fn, fallback_mode, model_context_limit, strict, model_strength
             )
         if LangGraphAdapter.detect(agent):
             return LangGraphAdapter().wrap_call(
-                agent, retrieve_fn, log_fn, fallback_mode, model_context_limit
+                agent, retrieve_fn, log_fn, fallback_mode, model_context_limit, strict, model_strength
             )
         # Default to LCEL
         return LCELAdapter().wrap_call(
-            agent, retrieve_fn, log_fn, fallback_mode, model_context_limit
+            agent, retrieve_fn, log_fn, fallback_mode, model_context_limit, strict, model_strength
         )
+
+
+# ── LangChain BaseChatMemory Bridge ───────────────────────────────────────────
+
+class NSNMemory(BaseChatMemory):
+    """
+    A native LangChain memory implementation that uses NeuroSleepNet
+    for persistent, sleep-consolidated retrieval.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.project = kwargs.get("project", "default")
+        self.user_id = kwargs.get("user_id", "default")
+        self.memory_key = kwargs.get("memory_key", "history")
+        self.recall_threshold = kwargs.get("recall_threshold", 0.5)
+    
+    @property
+    def memory_variables(self) -> List[str]:
+        return [self.memory_key]
+
+    def load_memory_variables(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        import nsn
+        query = inputs.get("input", inputs.get("question", ""))
+        memories = nsn.recall(str(query), user_id=self.user_id, min_score=self.recall_threshold)
+        
+        # Format as a string for the history variable
+        history = "\n".join([f"Memory: {m['content']}" for m in memories])
+        return {self.memory_key: history}
+
+    def save_context(self, inputs: Dict[str, Any], outputs: Dict[str, str]) -> None:
+        import nsn
+        # Store the user input as episodic memory
+        user_input = inputs.get("input", inputs.get("question", ""))
+        if user_input:
+            nsn.remember(str(user_input), user_id=self.user_id, type="episodic")
+        
+        # Store the agent output as agent memory
+        agent_output = outputs.get("output", "")
+        if agent_output:
+            nsn.remember(str(agent_output), user_id=self.user_id, type="agent")
+
+    def clear(self) -> None:
+        """Clear is a no-op for persistent NSN memory (governance handles pruning)."""
+        pass

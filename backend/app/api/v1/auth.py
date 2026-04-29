@@ -1,6 +1,9 @@
 import uuid
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timezone, timedelta
 from typing import Annotated, Optional
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -36,24 +39,70 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 async def get_current_user(
     request: Request,
-    token: Annotated[Optional[str], Depends(oauth2_scheme)] = None,
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """
-    Dependency to get current user. For local free tier, we bypass auth
-    and return an anonymous user.
+    Unified authentication: supports Bearer JWT and Bearer API Keys (nsn_sk_).
     """
-    result = await db.execute(select(User).where(User.email == "anonymous@nsn.local"))
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        user = User(email="anonymous@nsn.local", plan="free")
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
+    auth_header = request.headers.get("Authorization")
+    logger.info(f"Authenticating request. Header: {auth_header[:20] if auth_header else 'None'}...")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
         
-    request.state.user = user
-    return user
+        # 1. API Key check
+        if token.startswith("nsn_"):
+            # Check for exact hash match
+            from ...utils.crypto import verify_api_key
+            # We don't store plain keys, but we store hashes.
+            # To avoid scanning all keys, we use the prefix to narrow it down if stored.
+            # However, the current model uses key_hash.
+            stmt = select(ApiKey).where(ApiKey.is_active == True)
+            res = await db.execute(stmt)
+            keys = res.scalars().all()
+            for k in keys:
+                if verify_api_key(token, k.key_hash):
+                    # Found it
+                    k.last_used_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    user_stmt = select(User).where(User.id == k.user_id)
+                    user_res = await db.execute(user_stmt)
+                    return user_res.scalar_one()
+            
+            raise AuthenticationError("Invalid or expired API Key.")
+
+        # 2. JWT check
+        try:
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            user_id: str = payload.get("sub")
+            if user_id:
+                stmt = select(User).where(User.id == uuid.UUID(user_id))
+                res = await db.execute(stmt)
+                user = res.scalar_one_or_none()
+                if user:
+                    return user
+        except (JWTError, ValueError):
+            pass
+
+    # 3. Fallback for Local/Self-Host mode (if enabled)
+    # This allows zero-setup for the Docker stack
+    if settings.ALLOW_ANONYMOUS_ACCESS:
+        result = await db.execute(select(User).where(User.email == "anonymous@nsn.local"))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            user = User(
+                id=uuid.uuid4(),
+                email="anonymous@nsn.local",
+                plan="pro",
+                is_active=True
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            
+        return user
+        
+    raise AuthenticationError("Authentication required. Provide a Bearer API Key or JWT.")
 
 
 

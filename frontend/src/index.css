@@ -6,50 +6,50 @@
 
 @layer base {
   :root {
-    --background: 0 0% 3%;
-    --foreground: 0 0% 92%;
+    --background: 0 0% 0%; /* Pure black */
+    --foreground: 0 0% 100%; /* Pure white */
 
-    --card: 0 0% 7%;
-    --card-foreground: 0 0% 92%;
+    --card: 0 0% 5%;
+    --card-foreground: 0 0% 100%;
 
-    --popover: 0 0% 7%;
-    --popover-foreground: 0 0% 92%;
+    --popover: 0 0% 5%;
+    --popover-foreground: 0 0% 100%;
 
-    --primary: 24 95% 56%;
-    --primary-foreground: 0 0% 3%;
+    --primary: 0 0% 100%; /* White */
+    --primary-foreground: 0 0% 0%; /* Black */
 
-    --secondary: 0 0% 12%;
-    --secondary-foreground: 0 0% 92%;
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 0 0% 100%;
 
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 55%;
+    --muted: 0 0% 20%;
+    --muted-foreground: 0 0% 60%;
 
-    --accent: 24 95% 56%;
-    --accent-foreground: 0 0% 3%;
+    --accent: 0 0% 100%;
+    --accent-foreground: 0 0% 0%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
+    --destructive: 0 0% 40%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 0 0% 14%;
-    --input: 0 0% 14%;
-    --ring: 24 95% 56%;
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 0 0% 100%;
 
-    --radius: 0.75rem;
+    --radius: 0.25rem; /* Sharper corners for minimalism */
 
-    --glow-orange: 24 95% 56%;
-    --glow-blue: 220 90% 56%;
+    --glow-orange: 0 0% 0%; 
+    --glow-blue: 0 0% 0%;
 
-    --font-heading: 'Space Grotesk', sans-serif;
+    --font-heading: 'Inter', sans-serif;
     --font-body: 'Inter', sans-serif;
 
-    --sidebar-background: 0 0% 5%;
-    --sidebar-foreground: 0 0% 92%;
-    --sidebar-primary: 24 95% 56%;
-    --sidebar-primary-foreground: 0 0% 3%;
-    --sidebar-accent: 0 0% 12%;
-    --sidebar-accent-foreground: 0 0% 92%;
-    --sidebar-border: 0 0% 14%;
-    --sidebar-ring: 24 95% 56%;
+    --sidebar-background: 0 0% 2%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 0 0% 0%;
+    --sidebar-accent: 0 0% 10%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 15%;
+    --sidebar-ring: 0 0% 100%;
   }
 }
 
@@ -115,16 +115,16 @@
   @apply flex justify-between items-end mb-8;
 }
 .dashboard-title {
-  @apply text-3xl font-bold tracking-tight text-white mb-1;
+  @apply text-4xl font-black tracking-tighter text-white mb-1 uppercase;
 }
 .dashboard-subtitle {
-  @apply text-slate-400 text-sm;
+  @apply text-zinc-500 text-[10px] uppercase tracking-[0.3em] font-bold;
 }
 .dashboard-live-badge {
-  @apply flex items-center gap-2 px-3 py-1 bg-teal-500/10 text-teal-400 rounded-full text-xs font-medium border border-teal-500/20;
+  @apply flex items-center gap-2 px-3 py-1 bg-white text-black rounded-none text-[10px] font-bold uppercase tracking-widest;
 }
 .live-dot {
-  @apply w-2 h-2 bg-teal-400 rounded-full animate-pulse;
+  @apply w-1.5 h-1.5 bg-black rounded-full animate-pulse;
 }
 
 .dashboard-grid {
@@ -132,10 +132,13 @@
 }
 
 .dashboard-panel {
-  @apply bg-black/40 backdrop-blur-md border border-white/5 rounded-2xl p-6 hover:border-white/10 transition-all duration-300;
+  @apply bg-black border border-zinc-800 rounded-none p-6 transition-all;
+}
+.dashboard-panel:hover {
+  @apply border-white;
 }
 .panel-header {
-  @apply flex items-center gap-3 mb-5 font-semibold text-slate-200 text-sm uppercase tracking-wider;
+  @apply flex items-center gap-2 mb-6 font-bold text-white text-xs uppercase tracking-[0.2em] border-b border-zinc-800 pb-2;
 }
 .panel-body {
   @apply relative;
@@ -150,7 +153,7 @@
 .stat-val {
   @apply text-white font-medium;
 }
-.stat-val.teal { @apply text-teal-400; }
+.stat-val.primary { color: hsl(var(--primary)); }
 
 .health-badge {
   @apply ml-auto px-2 py-0.5 rounded text-[10px] font-bold uppercase;
@@ -161,7 +164,7 @@
 .health-weak { @apply bg-red-500/20 text-red-400; }
 
 .trigger-btn {
-  @apply ml-auto flex items-center gap-1.5 px-3 py-1 bg-teal-500 text-black rounded-lg text-xs font-bold hover:bg-teal-400 transition-colors;
+  @apply ml-auto flex items-center gap-1.5 px-3 py-1 bg-white text-black rounded-none text-[10px] font-bold hover:bg-zinc-200 transition-colors uppercase;
 }
 
 .sleep-summary {

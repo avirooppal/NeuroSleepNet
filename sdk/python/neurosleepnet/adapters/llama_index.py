@@ -9,9 +9,18 @@ import logging
 from typing import Any, Dict, List
 
 from .base import AbstractAdapter
-from ..context import safe_inject, build_injection_prefix, estimate_tokens
+from ..context import safe_inject, build_context, estimate_tokens
 
 logger = logging.getLogger(__name__)
+
+try:
+    from llama_index.core.memory import BaseMemory
+    from llama_index.core.llms import ChatMessage
+    _HAS_LLAMA_INDEX = True
+except ImportError:
+    _HAS_LLAMA_INDEX = False
+    BaseMemory = object
+    ChatMessage = object
 
 
 class LlamaIndexAdapter(AbstractAdapter):
@@ -34,7 +43,7 @@ class LlamaIndexAdapter(AbstractAdapter):
         if not safe_mems:
             return query_str
 
-        prefix = build_injection_prefix(safe_mems)
+        prefix = build_context(safe_mems)
         return f"{prefix}\n\nQuery: {query_str}"
 
     def extract_response(self, response: Any) -> str:
@@ -90,3 +99,39 @@ class LlamaIndexAdapter(AbstractAdapter):
             agent.chat = new_chat
 
         return agent
+
+
+# ── LlamaIndex BaseMemory Bridge ──────────────────────────────────────────────
+
+if _HAS_LLAMA_INDEX:
+    class NSNMemory(BaseMemory):
+        """
+        A native LlamaIndex memory implementation that uses NeuroSleepNet.
+        """
+        user_id: str = "default"
+        recall_threshold: float = 0.5
+        
+        def get(self, input_str: Optional[str] = None, **kwargs: Any) -> List[ChatMessage]:
+            import nsn
+            if not input_str:
+                return []
+            
+            memories = nsn.recall(str(input_str), user_id=self.user_id, min_score=self.recall_threshold)
+            
+            messages = []
+            for m in memories:
+                role = "assistant" if m.get("type") == "agent" else "user"
+                messages.append(ChatMessage(role=role, content=m["content"]))
+            return messages
+
+        def put(self, message: ChatMessage) -> None:
+            import nsn
+            m_type = "agent" if message.role == "assistant" else "episodic"
+            nsn.remember(message.content, user_id=self.user_id, type=m_type)
+
+        def reset(self) -> None:
+            pass
+else:
+    class NSNMemory:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("LlamaIndex is required for NSNMemory adapter.")

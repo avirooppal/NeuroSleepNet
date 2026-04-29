@@ -1,0 +1,46 @@
+[
+  {
+    "user_id": "dev_alice",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "Hey, I'm starting a new project called 'QuantumFlow'. It's a Python library for quantum simulation. I prefer using 'snake_case' for variables and 'PascalCase' for classes. Please remember this.",
+        "expected_fact": "Project name is QuantumFlow, uses snake_case for variables and PascalCase for classes."
+      },
+      {
+        "turn": 2,
+        "input": "I'm implementing the main engine. Can you suggest a class name for the simulator and a variable name for the initial state?",
+        "evaluation_query": "Did the model use PascalCase for the class and snake_case for the variable? Did it mention QuantumFlow?",
+        "expected_substrings": ["QuantumFlow", "Simulator", "initial_state"]
+      },
+      {
+        "turn": 3,
+        "input": "We found a bug in the 'gate_apply' function. It wasn't handling complex numbers correctly. I fixed it by using 'numpy.complex128'. Just letting you know for future context.",
+        "expected_fact": "Fixed bug in gate_apply using numpy.complex128 for complex numbers."
+      },
+      {
+        "turn": 4,
+        "input": "I'm writing a new function 'matrix_multiply'. Any tips based on our previous fix?",
+        "evaluation_query": "Did the model mention using numpy.complex128?",
+        "expected_substrings": ["complex128", "numpy"]
+      }
+    ]
+  },
+  {
+    "user_id": "dev_bob",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "I'm Bob. I'm working on a CLI tool named 'SkyShell'. I hate using external dependencies; I want everything in pure Python stdlib.",
+        "expected_fact": "Bob is working on SkyShell, prefers pure Python stdlib (no external deps)."
+      },
+      {
+        "turn": 2,
+        "input": "I need to parse some JSON from a URL. How should I do it in SkyShell?",
+        "evaluation_query": "Did the model suggest urllib and json (stdlib) instead of requests?",
+        "expected_substrings": ["urllib", "json"],
+        "forbidden_substrings": ["requests"]
+      }
+    ]
+  }
+]

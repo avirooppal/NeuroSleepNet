@@ -12,7 +12,7 @@ import threading
 from typing import Any, Dict, List
 
 from .base import AbstractAdapter
-from ..context import safe_inject, build_injection_prefix, estimate_tokens
+from ..context import safe_inject, build_context, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -29,31 +29,48 @@ class AnthropicAdapter(AbstractAdapter):
             and hasattr(getattr(agent, 'messages', None), 'create')
         )
 
-    def inject_memory(self, messages: list, memories: List[Dict[str, Any]], model_context_limit: int) -> list:
+    def inject_memory(self, kwargs: Dict[str, Any], memories: List[Dict[str, Any]], model_context_limit: int, strict: bool = False) -> Dict[str, Any]:
         """Prepend a system message with memory context to the messages list."""
+        messages = kwargs.get("messages", [])
         if not memories:
-            return messages
+            return kwargs
 
         # Estimate existing prompt size
         existing_tokens = sum(estimate_tokens(m.get("content", "")) for m in messages)
         safe_mems = safe_inject(memories, existing_tokens, model_context_limit)
         if not safe_mems:
-            return messages
+            return kwargs
 
-        prefix = build_injection_prefix(safe_mems)
+        prefix = build_context(safe_mems)
+        
+        if strict:
+            strict_prefix = (
+                "You are an agent with persistent long-term memory. "
+                "Use ONLY the provided context below to answer. "
+                "If the answer is not in the context, say 'NOT FOUND'. "
+                "Do not hallucinate or use external knowledge for these facts.\n\n"
+            )
+            prefix = strict_prefix + prefix
+            kwargs["temperature"] = 0.0
+            if "max_tokens" not in kwargs:
+                kwargs["max_tokens"] = 1024
+
         injected = list(messages)  # Never mutate original
 
-        # Anthropic supports system role — use it when available
-        # Prepend to existing system message if present, else insert new one
-        if injected and injected[0].get("role") == "system":
+        # Anthropic supports a top-level system parameter in newer SDKs or a system role
+        if "system" in kwargs:
+             kwargs["system"] = prefix + "\n\n" + str(kwargs["system"])
+        elif injected and injected[0].get("role") == "system":
             injected[0] = {
                 "role": "system",
                 "content": prefix + "\n\n" + injected[0]["content"],
             }
+            kwargs["messages"] = injected
         else:
             injected.insert(0, {"role": "system", "content": prefix})
+            kwargs["messages"] = injected
 
-        return injected
+        return kwargs
 
     def extract_response(self, response: Any) -> str:
         # anthropic.types.Message has .content list of blocks
@@ -73,6 +90,8 @@ class AnthropicAdapter(AbstractAdapter):
         log_fn,
         fallback_mode: str = "silent",
         model_context_limit: int = 200_000,
+        strict: bool = False,
+        model_strength: str = "STRONG"
     ):
         original_create = agent.messages.create
 
@@ -85,13 +104,12 @@ class AnthropicAdapter(AbstractAdapter):
                 )[-500:]  # Last 500 chars of user content for retrieval query
 
                 memories = retrieve_fn(query) if query else []
-                injected_messages = self.inject_memory(messages, memories, model_context_limit)
+                new_kwargs = self.inject_memory(kwargs.copy(), memories, model_context_limit, strict=strict)
 
                 # Handle streaming
-                stream = kwargs.get("stream", False)
+                stream = new_kwargs.get("stream", False)
                 if stream:
-                    kwargs["messages"] = injected_messages
-                    stream_obj = original_create(*args[1:] if args else [], **kwargs)
+                    stream_obj = original_create(**new_kwargs)
 
                     # Background buffer — never delay the stream
                     def _buffer_stream():
@@ -108,12 +126,12 @@ class AnthropicAdapter(AbstractAdapter):
                     return stream_obj
 
                 # Non-streaming
-                if args:
-                    args = (injected_messages,) + args[1:]
-                else:
-                    kwargs["messages"] = injected_messages
+                response = original_create(**new_kwargs)
+                
+                # Expose Visibility
+                try: setattr(response, "_nsn_context", memories)
+                except: pass
 
-                response = original_create(*args, **kwargs)
                 log_fn(query, memories, self.extract_response(response))
                 return response
 

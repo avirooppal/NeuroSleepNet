@@ -6,7 +6,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 # We don't have uv.lock yet, but uv sync will create it or use it if present.
 # Since we are in a fresh init, we just sync.
-RUN uv sync --no-dev
+RUN uv sync --no-dev --python /usr/local/bin/python
 
 COPY . .
 

@@ -2,185 +2,89 @@ import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
-import { Brain, Zap, Moon, AlertTriangle, Search, Play, Clock, TrendingUp, Database, RefreshCw, Activity } from 'lucide-react';
+import { 
+  Activity, 
+  Moon, 
+  Play, 
+  Clock, 
+  ArrowUpRight, 
+  Brain,
+  Shield,
+  Layers,
+  Search
+} from 'lucide-react';
 import toast from 'react-hot-toast';
+import { Button } from '@/components/ui/button';
+import { 
+  MissInspector,
+  PinManager, 
+  SleepCycleLog, 
+  AnomalyAlerts,
+  LiveSessionFeed,
+  AttentionHeatmap,
+  PulseShortcut
+} from '@/components/DashboardPanels';
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/v1';
-
-const SCORE_COLORS: Record<string, string> = {
-  Core: '#00e5cc',
-  Established: '#4f9cf9',
-  Developing: '#ffb347',
-  Weak: '#ff6b6b',
-};
+// Local mode dashboard API is served from the same port as the frontend
+const API_BASE = window.location.origin;
 
 // ── Subcomponents ──────────────────────────────────────────────────────────────
 
-function MemoryHealthPanel({ health }: { health: any }) {
-  if (!health) return <PanelSkeleton />;
-  const dist = health.score_distribution || {};
-  const pieData = Object.entries(dist).map(([name, value]) => ({ name, value }));
-
+function StatBlock({ label, value, subValue, icon: Icon, trend }: { 
+  label: string; 
+  value: string | number; 
+  subValue?: string;
+  icon?: any;
+  trend?: string;
+}) {
   return (
-    <div className="dashboard-panel">
-      <div className="panel-header">
-        <Brain size={18} className="text-teal" />
-        <span>Memory Health</span>
-        <span className={`health-badge health-${health.health_label?.toLowerCase()}`}>
-          {health.health_label}
-        </span>
+    <div className="bg-zinc-950 border border-zinc-900 p-5 rounded-xl hover:border-zinc-800 transition-colors group">
+      <div className="flex justify-between items-start mb-3">
+        <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-zinc-500">{label}</div>
+        {Icon && <Icon size={14} className="text-zinc-700 group-hover:text-zinc-400 transition-colors" />}
       </div>
-      <div className="panel-body flex gap-6 items-center">
-        <ResponsiveContainer width={120} height={120}>
-          <PieChart>
-            <Pie data={pieData} cx="50%" cy="50%" innerRadius={35} outerRadius={55} dataKey="value">
-              {pieData.map((entry) => (
-                <Cell key={entry.name} fill={SCORE_COLORS[entry.name] || '#444'} />
-              ))}
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
-        <div className="flex flex-col gap-1.5">
-          <div className="stat-row"><span className="stat-label">Active</span><span className="stat-val teal">{(health.active ?? 0).toLocaleString()}</span></div>
-          <div className="stat-row"><span className="stat-label">Archived</span><span className="stat-val muted">{(health.archived ?? 0).toLocaleString()}</span></div>
-          <div className="stat-row"><span className="stat-label">Avg Score</span><span className="stat-val">{health.avg_consolidation_score?.toFixed(3)}</span></div>
-          {Object.entries(dist).map(([label, count]) => (
-            <div key={label} className="stat-row">
-              <span className="flex items-center gap-1.5">
-                <span style={{ background: SCORE_COLORS[label] }} className="w-2 h-2 rounded-full inline-block" />
-                <span className="stat-label">{label}</span>
-              </span>
-              <span className="stat-val text-xs">{String(count)}</span>
-            </div>
-          ))}
-        </div>
+      <div className="flex items-baseline gap-2">
+        <div className="text-3xl font-black tracking-tighter text-zinc-100">{value}</div>
+        {trend && <div className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded">{trend}</div>}
       </div>
+      {subValue && <div className="text-[10px] text-zinc-600 font-mono mt-1">{subValue}</div>}
     </div>
   );
 }
 
-function SleepStatusPanel({ sleepStatus, onTrigger }: { sleepStatus: any; onTrigger: () => void }) {
-  if (!sleepStatus) return <PanelSkeleton />;
-  const last = sleepStatus.last_run;
+function HealthCircle({ score }: { score: number }) {
+  const percent = Math.min(100, Math.max(0, score * 100));
+  const color = score > 0.7 ? '#10b981' : score > 0.4 ? '#f59e0b' : '#ef4444';
+  
   return (
-    <div className="dashboard-panel">
-      <div className="panel-header">
-        <Moon size={18} className="text-teal" />
-        <span>Sleep Engine</span>
-        <button className="trigger-btn" onClick={onTrigger} title="Run sleep consolidation now">
-          <Play size={12} /> Run now
-        </button>
-      </div>
-      <div className="panel-body">
-        {last ? (
-          <>
-            <div className="sleep-summary">{last.summary}</div>
-            <div className="text-xs text-muted mt-1">Last run: {new Date(last.ran_at).toLocaleString()}</div>
-          </>
-        ) : (
-          <div className="text-muted text-sm">No runs yet — first nightly run at 3am UTC.</div>
-        )}
-        <div className="next-run-pill">
-          <Clock size={12} />
-          Next run in {sleepStatus.hours_until_next_run}h
+    <div className="flex flex-col items-center justify-center dashboard-panel py-8">
+      <div className="relative h-28 w-28">
+        <svg className="h-full w-full" viewBox="0 0 36 36">
+          <path
+            className="stroke-zinc-900 fill-none"
+            strokeWidth="3"
+            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+          />
+          <path
+            className="fill-none stroke-emerald-500 transition-all duration-1000 ease-out"
+            strokeWidth="3"
+            strokeDasharray={`${percent}, 100`}
+            strokeLinecap="round"
+            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+            style={{ stroke: color }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-2xl font-black text-white">{percent}%</span>
+          <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-tighter">Health</span>
         </div>
       </div>
-    </div>
-  );
-}
-
-function UsagePanel({ usage }: { usage: any }) {
-  if (!usage) return <PanelSkeleton />;
-  const pct = usage.quota_pct ?? 0;
-  const color = pct >= 95 ? '#ff6b6b' : pct >= 80 ? '#ffb347' : '#00e5cc';
-  return (
-    <div className="dashboard-panel">
-      <div className="panel-header">
-        <TrendingUp size={18} className="text-teal" />
-        <span>Usage & Quota</span>
-      </div>
-      <div className="panel-body">
-        <div className="quota-ring-container">
-          <svg width="80" height="80" viewBox="0 0 80 80">
-            <circle cx="40" cy="40" r="34" fill="none" stroke="#1e2030" strokeWidth="8"/>
-            <circle
-              cx="40" cy="40" r="34" fill="none"
-              stroke={color} strokeWidth="8"
-              strokeDasharray={`${213.6 * pct / 100} 213.6`}
-              strokeLinecap="round"
-              transform="rotate(-90 40 40)"
-              style={{ transition: 'stroke-dasharray 1s ease' }}
-            />
-          </svg>
-          <div className="quota-pct" style={{ color }}>{pct.toFixed(0)}%</div>
+      <div className="mt-4 text-center">
+        <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Status</div>
+        <div className="text-xs font-bold text-white px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800">
+          {score > 0.7 ? 'OPTIMIZED' : score > 0.4 ? 'STABLE' : 'FRAGMENTED'}
         </div>
-        <div className="usage-stats">
-          <div className="stat-row"><span className="stat-label">API calls (30d)</span><span className="stat-val">{(usage.api_calls_30d ?? 0).toLocaleString()}</span></div>
-          <div className="stat-row"><span className="stat-label">Memories total</span><span className="stat-val">{(usage.memories_total ?? 0).toLocaleString()}</span></div>
-          <div className="stat-row"><span className="stat-label">Quota</span><span className="stat-val">{(usage.quota_used ?? 0).toLocaleString()} / {(usage.quota_limit ?? 0).toLocaleString()}</span></div>
-        </div>
-        {usage.quota_warning && (
-          <div className="quota-warning-badge">
-            <AlertTriangle size={12} /> {pct >= 95 ? 'Quota critical' : 'Quota warning'}
-          </div>
-        )}
       </div>
-    </div>
-  );
-}
-
-function LiveSDKLogs({ projectId }: { projectId?: string }) {
-  const headers = { Authorization: `Bearer local_test_key` };
-  const { data } = useQuery({
-    queryKey: ['live-logs', projectId],
-    queryFn: () => fetch(`${API}/memories/explain_last?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
-    refetchInterval: 2000,
-  });
-
-  return (
-    <div className="dashboard-panel col-span-2 border border-teal-500/30 shadow-[0_0_15px_rgba(0,229,204,0.1)]">
-      <div className="panel-header">
-        <Activity size={18} className="text-teal-400" />
-        <span className="text-teal-400">Live SDK Interceptor Logs</span>
-        <span className="live-dot ml-auto" />
-      </div>
-      <div className="panel-body max-h-80 overflow-y-auto pr-2 space-y-4">
-        {data?.query ? (
-          <div className="text-sm">
-            <div className="text-slate-500 text-xs mb-1 uppercase tracking-widest font-bold">Latest Intercepted Prompt</div>
-            <div className="bg-black/50 p-4 rounded-xl border border-white/5 font-mono text-teal-300">
-              "{data.query}"
-            </div>
-            <div className="text-slate-500 text-xs mt-4 mb-2 uppercase tracking-widest font-bold">Auto-Injected Context (Memories)</div>
-            {data.memories?.length > 0 ? data.memories.map((m: any, i: number) => (
-              <div key={i} className="flex gap-3 bg-white/5 p-3 rounded-xl border border-white/5 mt-2 text-slate-300 text-sm items-start hover:bg-white/10 transition-colors">
-                <span className="text-[10px] font-bold text-teal-400 bg-teal-400/10 px-2 py-1 rounded font-mono mt-0.5">
-                  {(data.attention_scores?.[i] ?? m.attention_score ?? 0).toFixed(2)}
-                </span>
-                <span className="flex-1">{m.content}</span>
-              </div>
-            )) : (
-              <div className="text-slate-500 italic text-xs">No memories were injected for this prompt.</div>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-10 text-slate-500 text-sm">
-            <Activity className="h-8 w-8 mb-3 opacity-20" />
-            <span>Waiting for SDK activity...</span>
-            <span className="text-xs mt-1">Run your python script to see live interception!</span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function PanelSkeleton() {
-  return (
-    <div className="dashboard-panel animate-pulse">
-      <div className="h-4 bg-white/5 rounded w-1/3 mb-3" />
-      <div className="h-16 bg-white/5 rounded" />
     </div>
   );
 }
@@ -189,57 +93,180 @@ function PanelSkeleton() {
 
 export default function Dashboard() {
   const { projectId } = useParams();
-  const token = "local_test_key"; // Bypass auth locally
-  const headers = { Authorization: `Bearer ${token}` };
+  const [events, setEvents] = useState<any[]>([]);
 
-  const { data: health } = useQuery({
-    queryKey: ['analytics-health', projectId],
-    queryFn: () => fetch(`${API}/analytics/health?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
-    refetchInterval: 30_000,
+  // ── SSE Live Feed ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const sse = new EventSource(`${API_BASE}/api/events?project=${projectId || ''}`);
+    
+    sse.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data);
+        setEvents(prev => [event, ...prev].slice(0, 100));
+      } catch (err) {
+        console.error("SSE Parse Error:", err);
+      }
+    };
+
+    return () => sse.close();
+  }, [projectId]);
+
+  // ── Data Fetching ────────────────────────────────────────────────────────────
+  const { data: stats, refetch: refetchStats } = useQuery({
+    queryKey: ['dashboard-stats', projectId],
+    queryFn: () => fetch(`${API_BASE}/api/stats?project=${projectId || ''}`).then(r => r.json()),
+    refetchInterval: 10000,
   });
 
-  const { data: usage } = useQuery({
-    queryKey: ['analytics-usage', projectId],
-    queryFn: () => fetch(`${API}/analytics/usage?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
-    refetchInterval: 60_000,
+  const { data: misses } = useQuery({
+    queryKey: ['dashboard-misses', projectId],
+    queryFn: () => fetch(`${API_BASE}/api/misses?project=${projectId || ''}`).then(r => r.json()),
+    refetchInterval: 5000,
   });
 
-  const { data: sleepStatus } = useQuery({
-    queryKey: ['sleep-status', projectId],
-    queryFn: () => fetch(`${API}/sleep/status?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
-    refetchInterval: 60_000,
+  const { data: pins, refetch: refetchPins } = useQuery({
+    queryKey: ['dashboard-pins', projectId],
+    queryFn: () => fetch(`${API_BASE}/api/pins?project=${projectId || ''}`).then(r => r.json()),
+    refetchInterval: 10000,
   });
 
-  const { data: timeline } = useQuery({
-    queryKey: ['analytics-timeline', projectId],
-    queryFn: () => fetch(`${API}/analytics/timeline?project_id=${projectId || ''}`, { headers }).then(r => r.json()),
+  const { data: sleepLog } = useQuery({
+    queryKey: ['dashboard-sleep', projectId],
+    queryFn: () => fetch(`${API_BASE}/api/sleep?project=${projectId || ''}`).then(r => r.json()),
+    refetchInterval: 30000,
+  });
+
+  const { data: attentionData } = useQuery({
+    queryKey: ['attention', projectId],
+    queryFn: () => fetch(`${API_BASE}/api/analytics/attention?project_id=${projectId || ''}`).then(r => r.json()),
+    refetchInterval: 10000,
   });
 
   const triggerSleep = async () => {
-    try {
-      await fetch(`${API}/sleep/trigger`, { method: 'POST', headers });
-      toast.success('Sleep consolidation queued ✓');
-    } catch {
-      toast.error('Failed to trigger sleep run');
+    const promise = fetch(`${API_BASE}/api/sleep`, { method: 'POST' });
+    toast.promise(promise, {
+      loading: 'Waking sleep engine...',
+      success: 'Sleep cycle triggered ✓',
+      error: 'Failed to trigger sleep',
+    });
+    await promise;
+    refetchStats();
+  };
+
+  const handleUnpin = async (id: string) => {
+    if (!window.confirm("Are you sure you want to unpin this memory? Pins are hard rules.")) return;
+    
+    const res = await fetch(`${API_BASE}/api/pins?id=${id}`, { method: 'DELETE' });
+    if (res.ok) {
+      toast.success('Memory unpinned');
+      refetchPins();
     }
   };
 
   return (
-    <div className="dashboard-root">
-      <div className="dashboard-header">
+    <div className="dashboard-root max-w-[1600px] mx-auto p-6 bg-black min-h-screen text-zinc-100 font-sans">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
-          <h1 className="dashboard-title">Dashboard</h1>
-          <p className="dashboard-subtitle">Real-time memory intelligence</p>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="bg-emerald-500/10 p-2 rounded-lg">
+              <Brain size={24} className="text-emerald-500" />
+            </div>
+            <h1 className="text-3xl font-black tracking-tightest">NeuroSleepNet</h1>
+          </div>
+          <p className="text-zinc-500 text-sm font-medium">
+            Intelligence consolidation for <span className="text-zinc-300 font-bold">{projectId}</span>
+          </p>
         </div>
-        <div className="dashboard-live-badge"><span className="live-dot"/><span>Live</span></div>
+        
+        <div className="flex items-center gap-3">
+          <div className="flex flex-col items-end mr-4">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Live Engine</span>
+            </div>
+            <div className="text-[10px] font-mono text-zinc-600">Local Mode v0.3.0</div>
+          </div>
+          
+          <Button 
+            onClick={triggerSleep}
+            className="bg-zinc-100 text-black hover:bg-zinc-300 font-bold text-xs px-6 py-5 rounded-xl flex items-center gap-2"
+          >
+            <Moon size={16} /> 
+            Trigger Sleep
+          </Button>
+        </div>
       </div>
 
-      <div className="dashboard-grid">
-        <LiveSDKLogs projectId={projectId} />
-        <MemoryHealthPanel health={health} />
-        <SleepStatusPanel sleepStatus={sleepStatus} onTrigger={triggerSleep} />
-        <UsagePanel usage={usage} />
+      <AnomalyAlerts stats={stats} />
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <StatBlock 
+          label="Memories" 
+          value={(stats?.total_memories ?? 0).toLocaleString()} 
+          subValue={`${stats?.archived ?? 0} archived`} 
+          icon={Layers}
+        />
+        <StatBlock 
+          label="Attention Score" 
+          value={stats?.avg_consolidation_score?.toFixed(3) ?? "0.000"} 
+          subValue="Project accuracy"
+          icon={Activity}
+          trend={stats?.avg_consolidation_score > 0.5 ? "+12%" : undefined}
+        />
+        <StatBlock 
+          label="Recall Misses" 
+          value={(stats?.miss_count ?? 0).toLocaleString()} 
+          subValue="Withheld (low confidence)"
+          icon={Shield}
+        />
+        <StatBlock 
+          label="Sleep Cycles" 
+          value={stats?.sleep_cycles_run ?? 0} 
+          subValue={stats?.last_sleep ? `Last: ${new Date(stats.last_sleep.finished_at).toLocaleTimeString()}` : 'Never run'}
+          icon={Moon}
+        />
+      </div>
+
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
+        {/* Left Column: Health + Pins + Sleep Log */}
+        <div className="xl:col-span-4 space-y-6">
+          <HealthCircle score={stats?.health_score ?? 0} />
+          <AttentionHeatmap data={attentionData} />
+          <PulseShortcut projectId={projectId || 'default'} />
+          <PinManager pins={pins} onUnpin={handleUnpin} />
+          <SleepCycleLog sleepLog={sleepLog} />
+        </div>
+
+        {/* Right Column: Feed + Miss Inspector */}
+        <div className="xl:col-span-8 space-y-6">
+          <LiveSessionFeed events={events} />
+          <MissInspector misses={misses} />
+        </div>
+      </div>
+
+      {/* Footer Navigation */}
+      <div className="mt-12 pt-8 border-t border-zinc-900 grid grid-cols-2 md:grid-cols-4 gap-4 pb-12">
+        <FooterLink title="Memory Explorer" icon={Search} description="Search and edit every memory." />
+        <FooterLink title="Model Templates" icon={Brain} description="Phi-3, Mistral, Llama-3 optimization." />
+        <FooterLink title="Project Metrics" icon={Activity} description="Recall vs Miss rate analytics." />
+        <FooterLink title="Security Vault" icon={Shield} description="Encryption and isolation policy." />
       </div>
     </div>
   );
 }
+
+function FooterLink({ title, icon: Icon, description }: { title: string, icon: any, description: string }) {
+  return (
+    <div className="group cursor-pointer">
+      <div className="flex items-center gap-2 mb-2">
+        <Icon size={14} className="text-zinc-500 group-hover:text-emerald-500 transition-colors" />
+        <span className="text-xs font-bold text-zinc-400 group-hover:text-white transition-colors">{title}</span>
+      </div>
+      <p className="text-[10px] text-zinc-600 leading-snug">{description}</p>
+    </div>
+  );
+}
+

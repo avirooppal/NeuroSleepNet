@@ -76,7 +76,7 @@ class AbstractAdapter(ABC):
         """
         pass
 
-    def wrap_call(self, agent: Any, retrieve_fn, log_fn, fallback_mode: str = "silent", model_context_limit: int = 4096):
+    def wrap_call(self, agent: Any, retrieve_fn, log_fn, fallback_mode: str = "silent", model_context_limit: int = 4096, strict: bool = False, model_strength: str = "STRONG"):
         """
         The core wrapping logic. 
         Implementations should override this to properly wrap the __call__, .invoke(), 

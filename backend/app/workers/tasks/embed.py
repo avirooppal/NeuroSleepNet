@@ -20,7 +20,7 @@ EMBED_SERVICE_URL = os.environ.get("EMBED_SERVICE_URL", "http://nsn-embed:8001")
 def _call_embed_service(texts: list[str]) -> list[list[float]]:
     """Call the fastembed sidecar and return embedding vectors."""
     with httpx.Client(timeout=30.0) as client:
-        resp = client.post(f"{EMBED_SERVICE_URL}/embed", json={"texts": texts})
+        resp = client.post(f"{EMBED_SERVICE_URL}/v1/embed", json={"texts": texts})
         resp.raise_for_status()
         return resp.json()["embeddings"]
 

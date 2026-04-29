@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your_super_secret_key_here"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    ALLOW_ANONYMOUS_ACCESS: bool = False
 
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"

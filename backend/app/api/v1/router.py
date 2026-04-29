@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends
 from ...models.user import User
 
-from . import auth, memories, projects, search, analytics, sleep, dashboard, benchmark, webhooks, health
+from . import auth, memories, projects, search, analytics, sleep, dashboard, benchmark, webhooks, health, telemetry
 
 api_router = APIRouter()
+
+# ... existing routes ...
+api_router.include_router(telemetry.router, prefix="/telemetry", tags=["telemetry"])
 
 @api_router.get("/ping", tags=["health"])
 async def ping(current_user: User = Depends(auth.get_current_user)):
