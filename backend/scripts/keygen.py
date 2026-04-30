@@ -28,10 +28,10 @@ async def generate_key(email: str = "dev@neurosleepnet.io", name: str = "Default
             return
         
         # 2. Generate Random Key
-        # Format: nsn_sk_<32_random_chars>
-        raw_key = "nsn_sk_" + secrets.token_urlsafe(24)
+        # Format: nsn_live_<random_chars>
+        raw_key = "nsn_live_" + secrets.token_urlsafe(32)
         hashed = hashlib.sha256(raw_key.encode()).hexdigest()
-        prefix = raw_key[:10] # nsn_sk_...
+        prefix = raw_key[:16] # nsn_live_...
         
         # 3. Store Key
         new_key = ApiKey(

@@ -1,45 +1,73 @@
 import logging
 import time
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from .api.v1.router import api_router
 from .config import settings
+from .deps import get_db
 from .middleware.rate_limit import RateLimitMiddleware
 from .middleware.plan_check import PlanCheckMiddleware
 from .middleware.audit_log import AuditLogMiddleware
+from .middleware.auth import AuthenticationMiddleware
 from .utils.errors import NeuroSleepNetError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+# ── App lifespan — shared Redis pool ─────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup / shutdown: create and destroy shared Redis pool."""
+    app.state.redis = Redis.from_url(
+        str(settings.REDIS_URL),
+        encoding="utf-8",
+        decode_responses=True,
+    )
+    logger.info("[NSN] Redis pool initialised.")
+    yield
+    await app.state.redis.aclose()
+    logger.info("[NSN] Redis pool closed.")
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
+    version=settings.VERSION,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     docs_url="/docs",
     redoc_url=None,
+    lifespan=lifespan,
 )
 
-# Set up CORS
+# ── CORS — Fix 5: env-configurable origins, not wildcard ─────────────────────
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Project-ID", "Idempotency-Key"],
 )
 
-# Custom Middlewares (Order matters for request processing)
-# 1. Rate Limiting
-# app.add_middleware(RateLimitMiddleware)
-# 2. Plan checking for mutations
+# ── Custom Middlewares ────────────────────────────────────────────────────────
+# Fix 1: RateLimitMiddleware re-enabled (uses app.state.redis — no new connections)
+# Order: Auth (runs first) -> Audit -> Plan -> Rate (runs last)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(PlanCheckMiddleware)
 app.add_middleware(AuditLogMiddleware)
+app.add_middleware(AuthenticationMiddleware)
 
 
-# Global Exception Handler for custom errors
+# ── Exception handlers ────────────────────────────────────────────────────────
+
 @app.exception_handler(NeuroSleepNetError)
 async def neurosleepnet_exception_handler(request: Request, exc: NeuroSleepNetError):
     return JSONResponse(
@@ -49,7 +77,6 @@ async def neurosleepnet_exception_handler(request: Request, exc: NeuroSleepNetEr
     )
 
 
-# Generic catch-all for unexpected errors
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unexpected error: {exc}", exc_info=True)
@@ -59,26 +86,53 @@ async def generic_exception_handler(request: Request, exc: Exception):
     )
 
 
-# Health check
+# ── Fix 6: /health with real DB + Redis liveness checks ──────────────────────
+
 @app.get("/health", tags=["health"])
-async def health_check():
-    return {"status": "ok", "version": "0.1.0", "db": "ok", "redis": "ok", "embed": "ok"}
+async def health_check(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Liveness probe used by Docker, load-balancers, and Kubernetes.
+    Returns 200 when all critical services respond, 503 when degraded.
+    """
+    checks: dict = {}
+    overall = "ok"
 
-@app.get("/health/deep", tags=["health"])
-async def health_deep():
-    import httpx
-    # Detailed health check with latency stats
-    stats = {}
-    
-    # DB/Redis check logic is now mostly in the v1/health router,
-    # but we keep a basic version here for root-level monitoring.
-    stats["status"] = "operational"
-    return {"status": "ok", "services": stats, "timestamp": time.time()}
+    # Postgres
+    try:
+        await db.execute(text("SELECT 1"))
+        checks["db"] = "ok"
+    except Exception as exc:
+        checks["db"] = f"error: {str(exc)[:80]}"
+        overall = "degraded"
 
-# Include API V1 Router
+    # Redis — use shared pool, never create a new connection here
+    try:
+        redis = request.app.state.redis
+        await redis.ping()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        checks["redis"] = f"error: {str(exc)[:80]}"
+        overall = "degraded"
+
+    http_status = 200 if overall == "ok" else 503
+    return JSONResponse(
+        status_code=http_status,
+        content={
+            "status": overall,
+            "version": settings.VERSION,
+            **checks,
+        },
+    )
+
+
+# ── API routers ───────────────────────────────────────────────────────────────
+
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
-# SDK Dashboard Parity (for /api/stats, etc.)
+# SDK Dashboard Parity endpoints (/api/stats etc.)
 from .api.parity import parity_router
 app.include_router(parity_router, prefix="/api")
 

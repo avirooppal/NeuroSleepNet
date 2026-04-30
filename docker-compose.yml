@@ -9,7 +9,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
       - EMBED_SERVICE_URL=http://nsn-embed:8001
-      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
+      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:?NSN_ENCRYPTION_MASTER_KEY is required. See .env.example}
       - NSN_PII_DETECTION_ENABLED=${NSN_PII_DETECTION_ENABLED:-true}
       - UV_PYTHON=/usr/local/bin/python
     depends_on:
@@ -44,7 +44,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
       - EMBED_SERVICE_URL=http://nsn-embed:8001
-      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
+      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:?NSN_ENCRYPTION_MASTER_KEY is required. See .env.example}
       - UV_PYTHON=/usr/local/bin/python
     depends_on:
       - db
@@ -61,7 +61,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
-      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
+      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:?NSN_ENCRYPTION_MASTER_KEY is required. See .env.example}
       - UV_PYTHON=/usr/local/bin/python
     depends_on:
       - db
@@ -79,7 +79,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://nsn:nsn@db:5432/neurosleepnet
       - REDIS_URL=redis://redis:6379/0
       - EMBED_SERVICE_URL=http://nsn-embed:8001
-      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:-changeme-in-production-32chars!!}
+      - NSN_ENCRYPTION_MASTER_KEY=${NSN_ENCRYPTION_MASTER_KEY:?NSN_ENCRYPTION_MASTER_KEY is required. See .env.example}
       - UV_PYTHON=/usr/local/bin/python
     depends_on:
       - db

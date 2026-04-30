@@ -56,12 +56,33 @@ async def get_dashboard_stats(
         Memory.status == "active"
     )
     avg_score = await db.scalar(health_query) or 0.0
+
+    # 6. Misses from AuditLog
+    miss_query = select(func.count(AuditLog.id)).where(
+        AuditLog.user_id == current_user.id,
+        AuditLog.action == "memory.missed"
+    )
+    miss_count = await db.scalar(miss_query) or 0
+
+    # 7. Token Savings and Hits from Projects
+    from ...models.project import Project
+    project_stats_query = select(
+        func.sum(Project.token_savings),
+        # We approximate hits as the sum of access_count on memories
+        select(func.sum(Memory.access_count)).where(Memory.user_id == current_user.id).scalar_subquery()
+    ).where(Project.user_id == current_user.id)
+    
+    res = await db.execute(project_stats_query)
+    savings, hits = res.first() or (0, 0)
     
     return {
         "total_memories": total_memories,
         "monthly_ops": monthly_ops,
         "monthly_ops_limit": ops_limit,
         "memory_health_score": round(avg_score * 100, 2),
+        "miss_count": int(miss_count),
+        "recall_hit_count": int(hits or 0),
+        "token_savings_estimate": int(savings or 0),
         "last_sleep_run": last_sleep_log.created_at if last_sleep_log else None,
         "last_sleep_status": "success" if last_sleep_log else "pending"
     }

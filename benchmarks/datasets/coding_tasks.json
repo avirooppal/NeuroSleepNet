@@ -1,0 +1,181 @@
+[
+  {
+    "task_id": "api_pinning_v012",
+    "description": "Verify model remembers library version constraints across sessions.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "We are staying on version 0.12 of the 'FastCompute' library because version 1.0 changed the 'execute()' method signature from 'execute(data, callback)' to 'execute({data, options})'. Do not use the new signature.",
+        "expected_fact": "Using FastCompute v0.12, execute signature is (data, callback)."
+      },
+      {
+        "turn": 2,
+        "input": "I need to run a batch job using FastCompute. Can you write the snippet?",
+        "evaluation_query": "Did the model use the (data, callback) signature?",
+        "expected_substrings": ["execute(data,", "callback)"],
+        "forbidden_substrings": ["{data,", "options}"]
+      }
+    ]
+  },
+  {
+    "task_id": "repository_pattern_dip",
+    "description": "Verify model adheres to specific architectural patterns and DI libraries.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "We are implementing the Repository Pattern for all database access. Also, we are using 'InversifyJS' for Dependency Inversion. Classes should be decorated with @injectable().",
+        "expected_fact": "Project uses Repository Pattern and InversifyJS (@injectable)."
+      },
+      {
+        "turn": 2,
+        "input": "Create a new OrderRepository and an OrderService that depends on it.",
+        "evaluation_query": "Did the model use @injectable and @inject, and follow the repository pattern?",
+        "expected_substrings": ["@injectable", "OrderRepository", "Repository", "constructor"],
+        "forbidden_substrings": ["new OrderRepository()"]
+      }
+    ]
+  },
+  {
+    "task_id": "security_policy_pbkdf2",
+    "description": "Verify model enforces security constraints from previous sessions.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "Our security policy requires PBKDF2 for password hashing with exactly 100,000 iterations. Never use 'eval' for any dynamic logic.",
+        "expected_fact": "Security policy: PBKDF2 with 100,000 iterations, no eval."
+      },
+      {
+        "turn": 2,
+        "input": "I need to hash a user password during signup. How should I do it?",
+        "evaluation_query": "Did the model use PBKDF2 and 100,000 iterations?",
+        "expected_substrings": ["pbkdf2", "100000", "100,000"],
+        "forbidden_substrings": ["bcrypt", "argon2"]
+      }
+    ]
+  },
+  {
+    "task_id": "legacy_db_params",
+    "description": "Verify model remembers specific infrastructure parameters with fake values.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "The legacy database is running on legacy-db.internal:5432. The readonly user is 'readonly_user'. Password is 'hunter2'.",
+        "expected_fact": "Legacy DB: legacy-db.internal:5432, user: readonly_user, pass: hunter2."
+      },
+      {
+        "turn": 2,
+        "input": "Write a docker-compose.yml for a python service that connects to our legacy database.",
+        "evaluation_query": "Did the model use the correct internal host, port, and credentials?",
+        "expected_substrings": ["legacy-db.internal", "5432", "readonly_user", "hunter2"]
+      }
+    ]
+  },
+  {
+    "task_id": "style_guide_strict",
+    "description": "Verify model adheres to strict formatting and language features.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "From now on, use 2-space indentation, trailing commas, and semi-colons. Only use 'const' and 'let', never 'var'. Use arrow functions for all callbacks.",
+        "expected_fact": "Style guide: 2-space indent, trailing commas, semi-colons, no var, arrow functions."
+      },
+      {
+        "turn": 2,
+        "input": "Write a simple express GET handler that returns a list of items.",
+        "evaluation_query": "Did the model follow the style guide (semi-colons, arrow functions, etc)?",
+        "expected_substrings": [";", "=>", "const", ","],
+        "forbidden_substrings": ["var", "function("]
+      }
+    ]
+  },
+  {
+    "task_id": "error_handling_conventions",
+    "description": "Verify model uses project-specific error handling patterns.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "In this project, we never return null for errors. Always throw a 'DomainError' from the '@shared/errors' module and wrap all async calls in try/catch.",
+        "expected_fact": "Error handling: throw DomainError from @shared/errors, no null returns."
+      },
+      {
+        "turn": 2,
+        "input": "Write a function that fetches a user by ID from an API.",
+        "evaluation_query": "Did the model throw DomainError and use try/catch?",
+        "expected_substrings": ["throw new DomainError", "try", "catch", "@shared/errors"],
+        "forbidden_substrings": ["return null"]
+      }
+    ]
+  },
+  {
+    "task_id": "test_framework_pytest",
+    "description": "Verify model uses specific testing frameworks and fixture patterns.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "We use 'pytest' for all tests. Use the 'db_session' fixture for database tests and 'mock_redis' for caching tests. Avoid using 'unittest' classes.",
+        "expected_fact": "Test framework: pytest with db_session and mock_redis fixtures."
+      },
+      {
+        "turn": 2,
+        "input": "Write a test case for a function that saves a user to the DB and clears their cache.",
+        "evaluation_query": "Did the model use pytest fixtures and avoid unittest classes?",
+        "expected_substrings": ["def test_", "db_session", "mock_redis", "pytest"],
+        "forbidden_substrings": ["class Test", "TestCase", "unittest"]
+      }
+    ]
+  },
+  {
+    "task_id": "env_specific_urls",
+    "description": "Verify model remembers environment-specific service URLs.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "Our staging auth service is at 'https://auth-stage.nsn.io' and the production one is at 'https://auth.nsn.io'. I'm currently working on the staging integration.",
+        "expected_fact": "Staging Auth: auth-stage.nsn.io. Currently in staging."
+      },
+      {
+        "turn": 2,
+        "input": "I need to initialize the auth client in my local setup. What URL should I use?",
+        "evaluation_query": "Did the model specify the staging URL?",
+        "expected_substrings": ["auth-stage.nsn.io"],
+        "forbidden_substrings": ["auth.nsn.io"]
+      }
+    ]
+  },
+  {
+    "task_id": "naming_conventions_camel",
+    "description": "Verify model adheres to project-specific naming conventions.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "We use camelCase for all database columns and snake_case for all internal Python logic. This is to match our legacy schema.",
+        "expected_fact": "Naming: camelCase for DB columns, snake_case for Python logic."
+      },
+      {
+        "turn": 2,
+        "input": "Define a SQLAlchemy model for 'CustomerOrder' with columns for 'order date' and 'total amount'.",
+        "evaluation_query": "Did the model use camelCase for columns and snake_case for the class/logic?",
+        "expected_substrings": ["orderDate", "totalAmount"],
+        "forbidden_substrings": ["order_date", "total_amount"]
+      }
+    ]
+  },
+  {
+    "task_id": "api_migration_deprecated",
+    "description": "Verify model remembers API migrations discussed in previous sessions.",
+    "sessions": [
+      {
+        "turn": 1,
+        "input": "The 'logger.log_event()' method is now deprecated. Use 'logger.emit_telemetry()' instead. It takes the same arguments but includes automatic trace propagation.",
+        "expected_fact": "Deprecated: log_event. Replacement: emit_telemetry."
+      },
+      {
+        "turn": 2,
+        "input": "I need to log a 'user_login' event with the metadata {'method': 'github'}. How do I do it?",
+        "evaluation_query": "Did the model use emit_telemetry instead of log_event?",
+        "expected_substrings": ["emit_telemetry", "user_login"],
+        "forbidden_substrings": ["log_event"]
+      }
+    ]
+  }
+]

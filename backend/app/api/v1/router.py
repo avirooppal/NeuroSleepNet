@@ -22,3 +22,5 @@ api_router.include_router(dashboard.router, prefix="/dashboard", tags=["dashboar
 api_router.include_router(benchmark.router, prefix="/benchmark", tags=["benchmark"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 api_router.include_router(health.router, prefix="/health", tags=["health"])
+from . import feedback
+api_router.include_router(feedback.router, prefix="/feedback", tags=["feedback"])

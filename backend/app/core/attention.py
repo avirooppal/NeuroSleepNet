@@ -5,58 +5,91 @@ from typing import List, Optional, Tuple
 from .embeddings import get_embedding
 
 
-def compute_recency_weight(last_accessed_at: datetime) -> float:
+def normalize_recency(last_accessed_at: datetime) -> float:
     """
-    Decay weight based on time since last access.
-    Halflife of 7 days (default).
+    Convert age to a 0.0-1.0 scale.
+    Formula: 1.0 / (1.0 + log(1 + age_in_hours))
+    Result: 0h -> 1.0 | 1h -> ~0.59 | 24h -> ~0.24 | 720h (1 mo) -> ~0.13
     """
     now = datetime.now(timezone.utc)
-    # Ensure timezone awareness
     if last_accessed_at.tzinfo is None:
         last_accessed_at = last_accessed_at.replace(tzinfo=timezone.utc)
     
     delta = now - last_accessed_at
-    days = delta.total_seconds() / (24 * 3600)
+    hours = max(0, delta.total_seconds() / 3600.0)
     
-    # Simple exponential decay: 0.5 ^ (days / halflife)
-    # Halflife = 7 days
-    return math.pow(0.5, days / 7.0)
+    # Using log(1 + hours) to dampen the decay curve
+    return 1.0 / (1.0 + math.log(1 + hours))
+
+
+DEFAULT_WEIGHTS = {"w_sim": 0.45, "w_rec": 0.15, "w_con": 0.25, "w_fb": 0.15}
+
+def validate_weights(w: dict) -> dict:
+    """
+    Ensure weights sum to ~1.0. 
+    If malformed or missing, fallback to DEFAULT_WEIGHTS.
+    """
+    if not w:
+        return DEFAULT_WEIGHTS
+        
+    total = sum(w.values())
+    if not (0.99 <= total <= 1.01):
+        # We don't log directly here to keep it pure, but it will fallback
+        return DEFAULT_WEIGHTS
+    return w
 
 
 def score_memory(
-    cosine_similarity: float,
-    recency_weight: float,
-    consolidation_score: float
+    similarity: float,
+    recency: float,
+    consolidation: float,
+    feedback: float = 0.5,
+    importance: float = 1.0,
+    weights: dict = None
 ) -> float:
     """
-    Aggregate score for ranking.
+    Composite scoring formula for re-ranking.
+    All inputs (similarity, recency, consolidation, feedback) must be 0.0-1.0.
+    Importance is a multiplier (0.5 to 2.0).
     """
-    # 0 -> 1.0 range
-    return cosine_similarity * recency_weight * consolidation_score
+    # Fix: Fail loudly/fallback if weights are malformed
+    w = validate_weights(weights)
+    
+    base_score = (
+        (similarity * w.get("w_sim", 0.45)) +
+        (recency * w.get("w_rec", 0.15)) +
+        (consolidation * w.get("w_con", 0.25)) +
+        (feedback * w.get("w_fb", 0.15))
+    )
+    
+    # Apply importance multiplier
+    return base_score * importance
 
 
 def generate_explanation(
-    cosine_similarity: float,
-    recency_weight: float,
-    consolidation_score: float
+    similarity: float,
+    recency: float,
+    consolidation: float,
+    feedback: float = 0.0
 ) -> str:
     """
     Human-readable explanation of why a memory was retrieved.
     """
     reasons = []
-    if cosine_similarity > 0.8:
-        reasons.append(f"High semantic similarity ({cosine_similarity:.2f})")
-    elif cosine_similarity > 0.5:
-        reasons.append(f"Moderate similarity ({cosine_similarity:.2f})")
+    if similarity > 0.85:
+        reasons.append("Exact semantic match")
+    elif similarity > 0.6:
+        reasons.append("High contextual relevance")
         
-    if recency_weight > 0.8:
-        reasons.append("Recently accessed")
-    elif recency_weight < 0.2:
-        reasons.append("Old/Stale memory")
+    if recency > 0.8:
+        reasons.append("Fresh interaction")
         
-    if consolidation_score > 0.8:
-        reasons.append("Highly consolidated/Important")
-    elif consolidation_score < 0.3:
-        reasons.append("Fragile/At-risk memory")
+    if feedback > 0.8:
+        reasons.append("Strong human reinforcement")
+    elif feedback < 0.3 and feedback != 0:
+        reasons.append("Previously downweighted")
         
-    return " + ".join(reasons) if reasons else "Generic relevance"
+    if consolidation > 0.8:
+        reasons.append("Core project knowledge")
+        
+    return " + ".join(reasons) if reasons else "General context"

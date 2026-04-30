@@ -4,27 +4,24 @@ import json
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Tuple
 
-from cryptography.fernet import Fernet
-
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select, update, or_, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from redis.asyncio import Redis
 
 from ..models.memory import Memory
 from ..models.user import User
 from ..models.project import Project
+from ..models.audit_log import AuditLog
 from ..core.embeddings import get_embedding
-from ..core.attention import compute_recency_weight, generate_explanation, score_memory
+from ..core.attention import normalize_recency, generate_explanation, score_memory
+from ..core.content_encryption import encrypt_content, decrypt_content
 from .usage_service import check_and_inc_usage
 from ..config import settings
 
 logger = logging.getLogger(__name__)
 
-# Fallback symmetric key for AES-256
-_KEY = settings.NSN_ENCRYPTION_KEY.encode()[:32]
-import base64
-_FERNET_KEY = base64.urlsafe_b64encode(_KEY.ljust(32, b'0'))
-_fernet = Fernet(_FERNET_KEY)
+# Fixed in Fix 14 — uses app.core.content_encryption
+
 
 class MemoryService:
     @staticmethod
@@ -46,8 +43,8 @@ class MemoryService:
         # Get embedding
         embedding = await get_embedding(content)
         
-        # Encrypt content
-        encrypted_content = _fernet.encrypt(content.encode()).decode()
+        # Encrypt content — Fix 14: use per-tenant AES-256-GCM
+        encrypted_content = encrypt_content(content, str(user.id))
         
         # Calculate TTL
         expires_at = None
@@ -105,12 +102,9 @@ class MemoryService:
         result = await session.execute(query)
         memories = result.scalars().all()
         
-        # Decrypt memory contents
+        # Decrypt memory contents — Fix 14: per-tenant decryption
         for mem in memories:
-            try:
-                mem.content = _fernet.decrypt(mem.content.encode()).decode()
-            except Exception:
-                pass # Already plaintext or corrupted
+            mem.content = decrypt_content(mem.content, str(user_id))
         
         return list(memories), total
 
@@ -122,14 +116,35 @@ class MemoryService:
         query: str,
         top_k: int = 5,
         min_attention_score: float = 0.3,
-        dry_run: bool = False
+        dry_run: bool = False,
+        redis: Optional[Redis] = None
     ) -> List[dict]:
         query_embedding = await get_embedding(query)
         
-        # Get attention weights for this project
-        proj = await session.scalar(select(Project).where(Project.id == project_id))
-        weights = proj.attention_weights if proj and proj.attention_weights else {"w1": 0.5, "w2": 0.2, "w3": 0.2, "w4": 0.1}
+        # 1. Get attention weights (with Redis cache)
+        weights = None
+        cache_key = f"nsn:project:{project_id}:settings"
+        
+        if redis:
+            cached = await redis.get(cache_key)
+            if cached:
+                try:
+                    weights = json.loads(cached).get("attention_weights")
+                except:
+                    pass
 
+        if not weights:
+            proj = await session.scalar(select(Project).where(Project.id == project_id))
+            if proj and proj.settings:
+                weights = proj.settings.get("attention_weights")
+                if redis:
+                    # Cache for 5 minutes
+                    await redis.setex(cache_key, 300, json.dumps(proj.settings))
+            
+        if not weights:
+            weights = {"w_sim": 0.45, "w_rec": 0.15, "w_con": 0.25, "w_fb": 0.15}
+
+        # 2. Fetch candidates using vector search
         stmt = select(
             Memory,
             (1 - Memory.embedding.cosine_distance(query_embedding)).label("similarity")
@@ -139,26 +154,22 @@ class MemoryService:
             Memory.status == "active"
         )
             
-        stmt = stmt.order_by("similarity").limit(top_k * 2) 
+        stmt = stmt.order_by(desc("similarity")).limit(top_k * 2) 
         
         result = await session.execute(stmt)
         candidates = result.all()
         
         scored_results = []
         for mem, similarity in candidates:
-            # We skip detailed recency function setup here, dummy compute for simplicity
-            recency_weight = compute_recency_weight(mem.last_accessed_at)
+            recency_weight = normalize_recency(mem.last_accessed_at)
             
-            # Simple manual score calculation to use custom weights
-            # AttentionScore = w1 * Similarity + w2 * Recency + w3 * Consolidation
-            # AttentionScore = w1*Sim + w2*Recency + w3*Consolidation + w4*Feedback + w5*Importance
-            # Standard weights: 0.4, 0.1, 0.2, 0.2, 0.1
-            attention_score = (
-                (weights.get("w1", 0.4) * float(similarity)) +
-                (weights.get("w2", 0.1) * float(recency_weight)) +
-                (weights.get("w3", 0.2) * float(mem.consolidation_score)) +
-                (weights.get("w4", 0.2) * float((mem.feedback_score + 1.0) / 2.0)) +
-                (weights.get("w5", 0.1) * float(min(1.0, mem.importance / 2.0)))
+            attention_score = score_memory(
+                similarity=float(similarity),
+                recency=float(recency_weight),
+                consolidation=float(mem.consolidation_score),
+                feedback=float(mem.feedback_score),
+                importance=float(getattr(mem, 'importance', 1.0)),
+                weights=weights
             )
             
             if attention_score >= min_attention_score:
@@ -167,11 +178,8 @@ class MemoryService:
                     mem.access_count += 1
                     mem.last_accessed_at = now_utc
                 
-                # Decrypt content in-memory for response, without committing decrypted state
-                try:
-                    decrypted_content = _fernet.decrypt(mem.content.encode()).decode()
-                except Exception:
-                    decrypted_content = mem.content
+                # Decrypt content in-memory — Fix 14: per-tenant decryption
+                decrypted_content = decrypt_content(mem.content, str(user_id))
                 
                 # Check 48h mini-consolidation fallback
                 if not dry_run:
@@ -204,11 +212,51 @@ class MemoryService:
                 res = {
                     "memory": mem_dict,
                     "attention_score": attention_score,
-                    "why_retrieved": "Score passed threshold"
+                    "why_retrieved": generate_explanation(
+                        similarity=float(similarity),
+                        recency=float(recency_weight),
+                        consolidation=float(mem.consolidation_score),
+                        feedback=float(mem.feedback_score)
+                    )
                 }
                 scored_results.append(res)
-                
+            else:
+                # Fix 15: Log the miss so it appears in the Dashboard's Miss Inspector
+                if not dry_run:
+                    try:
+                        # Decrypt content for the log so the user can actually inspect it
+                        decrypted_for_log = decrypt_content(mem.content, str(user_id))
+                        audit = AuditLog(
+                            user_id=user_id,
+                            action="memory.missed",
+                            metadata_={
+                                "query": query[:200],
+                                "memory_id": str(mem.id),
+                                "memory_content": decrypted_for_log[:200],
+                                "score": float(attention_score),
+                                "threshold": float(min_attention_score),
+                                "project_id": str(project_id),
+                                "reason": "below_threshold"
+                            }
+                        )
+                        session.add(audit)
+                    except Exception as e:
+                        logger.warning(f"Failed to log memory miss: {e}")
+
         if not dry_run:
+            # Fix 4: Update token_savings estimate on the project
+            # Savings = tokens in all candidates - tokens in returned top-k subset
+            all_candidate_bytes = sum(len(getattr(m, 'content', '')) for m, _ in candidates)
+            hit_bytes = sum(len(r["memory"]["content"]) for r in scored_results) # using decrypted length here
+            savings_delta = max(0, (all_candidate_bytes - hit_bytes) // 4) # rough token approximation
+            
+            if savings_delta > 0:
+                await session.execute(
+                    update(Project)
+                    .where(Project.id == project_id)
+                    .values(token_savings=Project.token_savings + savings_delta)
+                )
+            
             await session.commit()
         
         scored_results.sort(key=lambda x: x["attention_score"], reverse=True)

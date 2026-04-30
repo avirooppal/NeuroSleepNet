@@ -33,6 +33,7 @@ from neurosleepnet import (  # explicit re-exports for IDE autocomplete
     stats,
     export,
     import_memories,
+    merge_projects,   # Fix 7: was missing from explicit re-exports
     dashboard,
     context,
     get_embed,

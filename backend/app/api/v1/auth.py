@@ -48,26 +48,26 @@ async def get_current_user(
     logger.info(f"Authenticating request. Header: {auth_header[:20] if auth_header else 'None'}...")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
-        
-        # 1. API Key check
+
+        # 1. API Key check — Fix 2: O(1) prefix-filtered lookup instead of O(N) scan
         if token.startswith("nsn_"):
-            # Check for exact hash match
-            from ...utils.crypto import verify_api_key
-            # We don't store plain keys, but we store hashes.
-            # To avoid scanning all keys, we use the prefix to narrow it down if stored.
-            # However, the current model uses key_hash.
-            stmt = select(ApiKey).where(ApiKey.is_active == True)
+            # Extract the stored prefix (first 16 chars) to narrow to a single candidate row
+            key_prefix = token[:16]
+            stmt = (
+                select(ApiKey)
+                .where(ApiKey.is_active == True)
+                .where(ApiKey.key_prefix == key_prefix)
+            )
             res = await db.execute(stmt)
-            keys = res.scalars().all()
-            for k in keys:
-                if verify_api_key(token, k.key_hash):
-                    # Found it
-                    k.last_used_at = datetime.now(timezone.utc)
-                    await db.commit()
-                    user_stmt = select(User).where(User.id == k.user_id)
-                    user_res = await db.execute(user_stmt)
-                    return user_res.scalar_one()
-            
+            candidate = res.scalar_one_or_none()
+
+            if candidate and verify_api_key(token, candidate.key_hash):
+                candidate.last_used_at = datetime.now(timezone.utc)
+                await db.commit()
+                user_stmt = select(User).where(User.id == candidate.user_id)
+                user_res = await db.execute(user_stmt)
+                return user_res.scalar_one()
+
             raise AuthenticationError("Invalid or expired API Key.")
 
         # 2. JWT check

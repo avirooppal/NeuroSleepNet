@@ -284,3 +284,87 @@ async def attention_distribution(
         for k, v in distribution.items() 
         if v > 0 or k in ["episodic", "semantic"]
     ]
+
+
+@router.get("/pathway-map")
+async def pathway_map(
+    project_id: str,
+    limit: int = Query(200, le=500),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Data for the D3 Residual Pathway Map.
+    Returns nodes (memories) and edges (similarity > 0.7).
+    """
+    import uuid
+    import numpy as np
+    from ...models.project import Project
+
+    # 1. Resolve project
+    try:
+        pid = uuid.UUID(project_id)
+    except ValueError:
+        stmt = select(Project).where(Project.user_id == current_user.id, Project.name == project_id)
+        res = await db.execute(stmt)
+        proj = res.scalars().first()
+        if not proj: return {"nodes": [], "links": []}
+        pid = proj.id
+
+    # 2. Fetch top N memories ranked by (importance * feedback_score)
+    # This ensures we only show the most relevant/significant nodes.
+    stmt = (
+        select(Memory)
+        .where(Memory.user_id == current_user.id, Memory.project_id == pid, Memory.status == "active")
+        .order_by((Memory.importance * Memory.feedback_score).desc(), Memory.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    memories = result.scalars().all()
+
+    if not memories:
+        return {"nodes": [], "links": []}
+
+    # 3. Prepare nodes
+    nodes = []
+    embeddings = []
+    for m in memories:
+        nodes.append({
+            "id": str(m.id),
+            "content": m.content[:100],
+            "type": m.memory_type,
+            "feedback": m.feedback_score,
+            "importance": m.importance,
+            "size": 5 + (m.feedback_score * 10), # Node size based on feedback
+        })
+        # Extract embedding from pgvector object
+        if m.embedding is not None:
+            embeddings.append(np.array(m.embedding))
+        else:
+            embeddings.append(None)
+
+    # 4. Compute edges (Cosine Similarity > 0.7)
+    links = []
+    num_mems = len(memories)
+    for i in range(num_mems):
+        if embeddings[i] is None: continue
+        
+        for j in range(i + 1, num_mems):
+            if embeddings[j] is None: continue
+            
+            # Cosine similarity calculation
+            norm_i = np.linalg.norm(embeddings[i])
+            norm_j = np.linalg.norm(embeddings[j])
+            if norm_i == 0 or norm_j == 0: continue
+            
+            sim = np.dot(embeddings[i], embeddings[j]) / (norm_i * norm_j)
+            
+            if sim > 0.7:
+                links.append({
+                    "source": str(memories[i].id),
+                    "target": str(memories[j].id),
+                    "value": float(sim),
+                })
+
+    return {"nodes": nodes, "links": links}
+

@@ -180,6 +180,47 @@ async def archive_low_score_memories(
 
 # ── Full Nightly Sleep Run ────────────────────────────────────────────────────
 
+async def promote_episodic_to_semantic(
+    session: AsyncSession,
+    user_id: str,
+    project_id: Optional[str] = None,
+) -> int:
+    """
+    Fix 9: Promote episodic memories to semantic when consolidation_score >= 0.75
+    or access_count >= 3. Mirrors the local store's promotion logic for the
+    Celery (self-host) sleep path.
+
+    Returns the count of memories promoted.
+    """
+    from sqlalchemy import or_
+    query = select(Memory).where(
+        Memory.user_id == user_id,
+        Memory.status == "active",
+        Memory.memory_type == "episodic",
+        or_(
+            Memory.consolidation_score >= 0.75,
+            Memory.access_count >= 3,
+        ),
+    )
+    if project_id:
+        query = query.where(Memory.project_id == project_id)
+
+    result = await session.execute(query)
+    candidates = result.scalars().all()
+
+    promoted = 0
+    now = datetime.now(timezone.utc)
+    for mem in candidates:
+        mem.memory_type = "semantic"
+        mem.importance = min(2.0, mem.importance + 0.15)
+        mem.last_consolidated_at = now
+        promoted += 1
+
+    return promoted
+
+
+# ── Full Nightly Sleep Run ────────────────────────────────────────────────────
+
 async def run_sleep_phase(
     session: AsyncSession,
     user_id: str,
@@ -208,6 +249,9 @@ async def run_sleep_phase(
         count_q = count_q.where(Memory.project_id == project_id)
     scanned = await session.scalar(count_q) or 0
 
+    # Step 3.5 — Fix 9: Promote episodic → semantic (new — mirrors local store)
+    promoted = await promote_episodic_to_semantic(session, user_id, project_id)
+
     # Step 4 — Archive low-score candidates (respects min_memories floor)
     archive_stats = await archive_low_score_memories(
         session, user_id, min_memories, min_age_hours, project_id
@@ -230,6 +274,7 @@ async def run_sleep_phase(
         guardrails_triggered=archive_stats["guardrails_triggered"],
         run_duration_ms=duration_ms,
         run_type=run_type,
+        notes=f"promoted={promoted}",
     )
     session.add(log)
     await session.commit()
@@ -240,6 +285,7 @@ async def run_sleep_phase(
         "status": "success",
         "scanned": scanned,
         "consolidated": boost_stats["boosted"],
+        "promoted": promoted,
         "avg_score_delta": boost_stats["avg_delta"],
         "archived": archive_stats["archived"],
         "deleted_ttl": deleted_ttl,

@@ -12,6 +12,9 @@ class DashboardStats(BaseModel):
     monthly_ops: int
     monthly_ops_limit: Optional[int]
     memory_health_score: float  # 0-100
+    miss_count: int
+    recall_hit_count: int
+    token_savings_estimate: int
     last_sleep_run: Optional[datetime]
     last_sleep_status: str
 

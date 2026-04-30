@@ -84,7 +84,8 @@ class LocalStore:
                     project TEXT PRIMARY KEY,
                     first_run INTEGER DEFAULT 1,
                     created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now')),
-                    token_savings INTEGER DEFAULT 0
+                    token_savings INTEGER DEFAULT 0,
+                    settings TEXT DEFAULT '{}'
                 );
             """)
             # FTS
@@ -98,6 +99,12 @@ class LocalStore:
                 BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.rowid, old.content); END;
             """)
             c.commit()
+            # Migration
+            try:
+                cur.execute("ALTER TABLE project_meta ADD COLUMN settings TEXT DEFAULT '{}'")
+                c.commit()
+            except sqlite3.OperationalError:
+                pass 
 
     # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -171,6 +178,30 @@ class LocalStore:
 
     # ── retrieve ───────────────────────────────────────────────────────────────
 
+    def _normalize_recency(self, created_at_str: str) -> float:
+        """Port of attention.py normalize_recency for local store."""
+        import math
+        try:
+            created_at = datetime.strptime(created_at_str, '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
+            delta = now - created_at
+            hours = max(0, delta.total_seconds() / 3600.0)
+            return 1.0 / (1.0 + math.log(1 + hours))
+        except:
+            return 0.5
+
+    def _score_memory(self, similarity: float, recency: float, consolidation: float, 
+                      feedback: float, importance: float, weights: dict) -> float:
+        """Port of attention.py score_memory for local store."""
+        w = weights
+        base_score = (
+            (similarity * w.get("w_sim", 0.45)) +
+            (recency * w.get("w_rec", 0.15)) +
+            (consolidation * w.get("w_con", 0.25)) +
+            (feedback * w.get("w_fb", 0.15))
+        )
+        return base_score * importance
+
     def retrieve(self, query: str, query_embedding: Optional[List[float]], project: str,
                  user_id: Optional[str] = None, top_k: int = 5,
                  memory_types: Optional[List[str]] = None,
@@ -207,6 +238,16 @@ class LocalStore:
 
             user_clause = " AND (user_id=? OR user_id IS NULL)" if user_id else ""
             user_params = [user_id] if user_id else []
+
+            # 0. Load project settings (weights)
+            settings_row = cur.execute("SELECT settings FROM project_meta WHERE project=?", (project,)).fetchone()
+            weights = {"w_sim": 0.45, "w_rec": 0.15, "w_con": 0.25, "w_fb": 0.15}
+            if settings_row:
+                try:
+                    p_settings = json.loads(settings_row[0])
+                    weights = p_settings.get("attention_weights", weights)
+                except:
+                    pass
 
             # 1. Pinned memories — always injected first
             pin_rows = cur.execute(
@@ -263,41 +304,23 @@ class LocalStore:
                     d.pop("embedding", None)
                     cosine = 0.0
 
-                try:
-                    created = datetime.strptime(d["created_at"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                    age_days = (now - created).days
-                except Exception:
-                    age_days = 0
-                temporal = max(0.5, 1.0 - (age_days / 180.0))
+                # Use _normalize_recency from local_store (already handles hours/log scale)
+                recency = self._normalize_recency(d["created_at"])
 
                 k_score = results.get(mid, {}).get("keyword_score", 0.0)
                 tfidf_score = tfidf_scores.get(mid, 0.0)
 
-                # Signal gate — TF-IDF path uses its score as primary signal
-                if not use_dense:
-                    if tfidf_score < 0.05:
-                        continue
-                    attention = (
-                        tfidf_score * 0.60 +
-                        k_score * 0.20 +
-                        d.get("consolidation_score", 0.5) * 0.15 +
-                        min(1.0, d.get("importance", 1.0)) * 0.05
-                    )
-                else:
-                    # Dense path gate
-                    gate = 0.20 if k_score > 0.1 else 0.30
-                    if cosine < gate and k_score < 0.1:
-                        continue
+                # Similarity is either cosine (dense) or tfidf (sparse) or keyword
+                sim = cosine if use_dense else max(tfidf_score, k_score)
 
-                    feedback_boost = d.get("feedback_score", 0.0) * 0.05
-                    attention = (
-                        cosine * 0.50 +
-                        k_score * 0.20 +
-                        d.get("consolidation_score", 0.5) * 0.15 +
-                        temporal * 0.10 +
-                        min(1.0, d.get("importance", 1.0)) * 0.05 +
-                        feedback_boost
-                    )
+                attention = self._score_memory(
+                    similarity=sim,
+                    recency=recency,
+                    consolidation=d.get("consolidation_score", 0.5),
+                    feedback=d.get("feedback_score", 0.5),
+                    importance=d.get("importance", 1.0),
+                    weights=weights
+                )
 
                 if attention < min_score:
                     continue
@@ -326,6 +349,18 @@ class LocalStore:
                         f"UPDATE memories SET access_count=access_count+1, last_accessed_at=strftime('%Y-%m-%d %H:%M:%S','now') WHERE id IN ({','.join('?'*len(ids))})",
                         ids
                     )
+                c.commit()
+
+            # Fix 4: Update token_savings estimate.
+            # Savings = tokens in all candidate memories - tokens in injected top-k subset.
+            all_candidates_tokens = sum(len(v.get("content", "")) // 4 for v in final)
+            injected_tokens = sum(len(m.get("content", "")) // 4 for m in top)
+            savings_delta = max(0, all_candidates_tokens - injected_tokens)
+            if savings_delta > 0:
+                cur.execute(
+                    "UPDATE project_meta SET token_savings = COALESCE(token_savings, 0) + ? WHERE project=?",
+                    (savings_delta, project)
+                )
                 c.commit()
 
             return top
@@ -450,22 +485,88 @@ class LocalStore:
 
     def get_stats(self, project: str) -> Dict[str, Any]:
         with self._conn() as c:
-            total = c.execute("SELECT COUNT(*) FROM memories WHERE project=? AND status='active'", (project,)).fetchone()[0]
+            total = c.execute(
+                "SELECT COUNT(*) FROM memories WHERE project=? AND status='active'",
+                (project,)
+            ).fetchone()[0]
+
             by_type = {}
-            for row in c.execute("SELECT memory_type, COUNT(*) as cnt FROM memories WHERE project=? AND status='active' GROUP BY memory_type", (project,)):
+            for row in c.execute(
+                "SELECT memory_type, COUNT(*) as cnt FROM memories WHERE project=? AND status='active' GROUP BY memory_type",
+                (project,)
+            ):
                 by_type[row["memory_type"]] = row["cnt"]
-            pinned = c.execute("SELECT COUNT(*) FROM memories WHERE project=? AND pinned=1 AND status='active'", (project,)).fetchone()[0]
-            avg_score = c.execute("SELECT AVG(consolidation_score) FROM memories WHERE project=? AND status='active'", (project,)).fetchone()[0] or 0.0
-            hits = c.execute("SELECT COUNT(*) FROM miss_log WHERE project=?", (project,)).fetchone()[0]
-            sleep_cycles = c.execute("SELECT COUNT(*) FROM sleep_log WHERE project=?", (project,)).fetchone()[0]
-            users = c.execute("SELECT COUNT(DISTINCT user_id) FROM memories WHERE project=? AND user_id IS NOT NULL", (project,)).fetchone()[0]
+
+            pinned = c.execute(
+                "SELECT COUNT(*) FROM memories WHERE project=? AND pinned=1 AND status='active'",
+                (project,)
+            ).fetchone()[0]
+
+            avg_score = c.execute(
+                "SELECT AVG(consolidation_score) FROM memories WHERE project=? AND status='active'",
+                (project,)
+            ).fetchone()[0] or 0.0
+
+            # Fix 4: rename 'hits' → 'miss_count' (was querying miss_log, not hits)
+            miss_count = c.execute(
+                "SELECT COUNT(*) FROM miss_log WHERE project=?",
+                (project,)
+            ).fetchone()[0]
+
+            # Hit count: sum of access_count across all active memories (approximation)
+            recall_hit_count = c.execute(
+                "SELECT COALESCE(SUM(access_count), 0) FROM memories WHERE project=? AND status='active'",
+                (project,)
+            ).fetchone()[0] or 0
+
+            total_recalls = recall_hit_count + miss_count
+            recall_hit_rate = (
+                round(recall_hit_count / total_recalls, 3) if total_recalls > 0 else 0.0
+            )
+            recall_miss_rate = (
+                round(miss_count / total_recalls, 3) if total_recalls > 0 else 0.0
+            )
+
+            # Fix 4: token_savings from project_meta (now updated by retrieve())
+            token_savings_row = c.execute(
+                "SELECT COALESCE(token_savings, 0) FROM project_meta WHERE project=?",
+                (project,)
+            ).fetchone()
+            token_savings = token_savings_row[0] if token_savings_row else 0
+
+            sleep_cycles = c.execute(
+                "SELECT COUNT(*) FROM sleep_log WHERE project=?",
+                (project,)
+            ).fetchone()[0]
+
+            memories_consolidated = c.execute(
+                "SELECT COALESCE(SUM(boosted), 0) FROM sleep_log WHERE project=?",
+                (project,)
+            ).fetchone()[0] or 0
+
+            dupes_removed = c.execute(
+                "SELECT COALESCE(SUM(deduped), 0) FROM sleep_log WHERE project=?",
+                (project,)
+            ).fetchone()[0] or 0
+
+            users = c.execute(
+                "SELECT COUNT(DISTINCT user_id) FROM memories WHERE project=? AND user_id IS NOT NULL",
+                (project,)
+            ).fetchone()[0]
+
         return {
             "total_memories": total,
             "by_type": by_type,
             "pinned": pinned,
-            "avg_consolidation_score": round(avg_score, 3),
-            "miss_count": hits,
+            "avg_consolidation_score": round(float(avg_score), 3),
+            "miss_count": miss_count,
+            "recall_hit_count": recall_hit_count,
+            "recall_hit_rate": recall_hit_rate,
+            "recall_miss_rate": recall_miss_rate,
+            "token_savings_estimate": token_savings,
             "sleep_cycles_run": sleep_cycles,
+            "memories_consolidated": memories_consolidated,
+            "dupes_removed": dupes_removed,
             "unique_users": users,
         }
 

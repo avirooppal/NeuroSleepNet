@@ -100,8 +100,8 @@ MODEL_FAMILY_TEMPLATES = {
     # Phi-3: responds best to structured context at the very top of the prompt
     "phi3": {
         "position": "top",
-        "prefix": "You have access to the following long-term memory. Use it to answer accurately:\n",
-        "suffix": "\n\nNow answer the following:\n",
+        "prefix": "IMPORTANT: PREVIOUS CONTEXT FROM LONG-TERM MEMORY\n--------------------------------------------------\n",
+        "suffix": "\n--------------------------------------------------\nUse the above memory to answer the current request.\n\n",
         "default_format": "plain",
     },
     # Mistral: instruction-tuned, benefits from XML in system role
@@ -120,10 +120,10 @@ MODEL_FAMILY_TEMPLATES = {
     },
     # Llama-3: responds well to system-role XML
     "llama3": {
-        "position": "system",
-        "prefix": "<|system|>\nYou have access to the following memory context.\n",
-        "suffix": "\n<|end|>\n",
-        "default_format": "xml",
+        "position": "top",
+        "prefix": "IMPORTANT: PREVIOUS CONTEXT FROM LONG-TERM MEMORY\n--------------------------------------------------\n",
+        "suffix": "\n--------------------------------------------------\nUse the above memory to answer the current request.\n\n",
+        "default_format": "plain",
     },
     # Generic fallback
     "generic": {

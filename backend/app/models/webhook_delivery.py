@@ -23,5 +23,5 @@ class WebhookDelivery(Base):
     http_status: Mapped[int] = mapped_column(Integer, nullable=True)   # None = never reached server
     attempt_count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     last_error: Mapped[str] = mapped_column(Text, nullable=True)
-    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    succeeded: Mapped[bool] = mapped_column(default=False, nullable=False)
+    delivered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    succeeded: Mapped[bool] = mapped_column(default=False, nullable=False, index=True)

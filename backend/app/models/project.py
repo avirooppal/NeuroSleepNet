@@ -19,7 +19,10 @@ class Project(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
-    attention_weights: Mapped[dict] = mapped_column(JSONB, default={"w1": 0.50, "w2": 0.20, "w3": 0.20, "w4": 0.10})
+    settings: Mapped[dict] = mapped_column(JSONB, default={
+        "attention_weights": {"w_sim": 0.45, "w_rec": 0.15, "w_con": 0.25, "w_fb": 0.15}
+    })
+    token_savings: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     # Relationships

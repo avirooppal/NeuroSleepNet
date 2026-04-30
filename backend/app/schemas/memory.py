@@ -23,6 +23,7 @@ class Memory(MemoryBase):
     user_id: uuid.UUID
     consolidation_score: float
     access_count: int
+    feedback_score: float = 0.5
     status: str
     created_at: datetime
     last_accessed_at: datetime

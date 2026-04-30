@@ -5,14 +5,14 @@ import json
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, Query, Header, status, HTTPException, Request
+from fastapi import APIRouter, Depends, Query, Header, status, HTTPException, Request, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from redis.asyncio import Redis
 
 from ...config import settings
 from ...workers.celery_app import celery_app
-from ...deps import get_db
+from ...deps import get_db, get_redis
 from ...models.user import User
 from ...schemas import memory as memory_schema
 from ...services.memory_service import memory_service
@@ -90,6 +90,7 @@ async def retrieve_memories(
     dry_run: bool = Query(False, description="If true, does not update access_count or consolidation scoring."),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ):
     """
     Semantic search with attention reranking.
@@ -106,16 +107,17 @@ async def retrieve_memories(
         query=query,
         top_k=top_k,
         dry_run=dry_run,
+        redis=redis,
     )
     return {"memories": memories}
 
 
-@router.post("/remember", status_code=status.HTTP_201_CREATED)
+@router.post("/remember", response_model=memory_schema.Memory, status_code=status.HTTP_201_CREATED)
 async def remember_important(
-    content: str,
-    importance: float = 0.9,
-    tags: Optional[List[str]] = None,
-    project_id: Optional[str] = None,
+    content: str = Body(..., embed=True),
+    importance: float = Body(0.9),
+    tags: Optional[List[str]] = Body(None),
+    project_id: Optional[str] = Body(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -124,11 +126,12 @@ async def remember_important(
     Importance is pre-boosted and these memories are resistant to sleep archival.
     """
     safe_content = redact_pii(content)
+    actual_project_id = await _resolve_project_id(project_id, current_user.id, db) if project_id else None
     res = await memory_service.create_memory(
         session=db,
         user=current_user,
         content=safe_content,
-        project_id=uuid.UUID(project_id) if project_id else None,
+        project_id=actual_project_id,
         tags=tags or ["manual-injection"],
         importance=importance,
     )

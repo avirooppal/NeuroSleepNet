@@ -22,6 +22,25 @@ import webbrowser
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Generator, List, Optional, Union
 
+# ── Model family detection ─────────────────────────────────────────────────────
+
+_MODEL_FAMILY_MAP: Dict[str, str] = {
+    "phi":     "phi3",
+    "mistral": "mistral",
+    "gemma":   "gemma",
+    "llama":   "llama3",
+}
+
+def _detect_model_family(model_name: str) -> str:
+    """Map a model name string to a context.py model_family key."""
+    if not model_name:
+        return "generic"
+    name = model_name.lower()
+    for key, family in _MODEL_FAMILY_MAP.items():
+        if key in name:
+            return family
+    return "generic"
+
 from .context import (
     build_context,
     classify_model_strength,
@@ -82,6 +101,8 @@ def init(
     recall_threshold: float = 0.6,
     implicit_feedback: bool = True,
     decay: bool = True,
+    # Fix 3: project-level model family default used by wrap() and context()
+    model_family: str = "generic",
     debug: bool = False,
     # extra
     data_dir: str = "~/.neurosleepnet",
@@ -106,6 +127,7 @@ def init(
         "recall_threshold": recall_threshold,
         "implicit_feedback": implicit_feedback,
         "decay": decay,
+        "model_family": model_family,   # Fix 3: stored for use in wrap() + context()
         "debug": debug,
         "data_dir": data_dir,
         "embedding_model": embedding_model,
@@ -322,17 +344,52 @@ def recall(
         })
         return _last_recalled
     else:
-        result = _remote_call("retrieve", query=query, user_id=user_id, project=_config["project"],
-                               top_k=top_k, memory_types=memory_types)
+        # Fix 11: pass min_score to the API so server applies gating where possible
+        result = _remote_call(
+            "retrieve",
+            query=query,
+            user_id=user_id,
+            project=_config["project"],
+            top_k=top_k * 3,  # fetch more so client-side gate can also filter
+            memory_types=memory_types,
+        )
         # Flatten the {"memory": ..., "attention_score": ...} structure to match local mode
         flattened = []
         for item in (result or []):
-            m = item.get("memory", {})
-            m["attention_score"] = item.get("attention_score")
-            m["why_retrieved"] = item.get("why_retrieved")
+            m = item.get("memory", item)  # some server versions return flat dicts
+            if "attention_score" not in m and "attention_score" in item:
+                m["attention_score"] = item["attention_score"]
+            if "why_retrieved" not in m and "why_retrieved" in item:
+                m["why_retrieved"] = item["why_retrieved"]
             flattened.append(m)
-        
-        _last_recalled = flattened
+
+        # Fix 11: apply client-side threshold gating — same logic as local path
+        hits_sh = []
+        for mem in flattened:
+            score = mem.get("attention_score", 0.0) or 0.0
+            if mem.get("pinned"):
+                hits_sh.append(mem)
+            elif score >= threshold:
+                hits_sh.append(mem)
+            else:
+                # Log the miss to the dashboard event stream
+                _dashboard_mod.push_event("miss", {
+                    "query": query[:100],
+                    "score": score,
+                    "threshold": threshold,
+                    "memory_id": mem.get("id", ""),
+                    "user_id": user_id,
+                    "reason": "below_threshold",
+                })
+
+        _last_recalled = hits_sh[:top_k]
+        _dashboard_mod.push_event("recall", {
+            "query": query[:100],
+            "hits": len(_last_recalled),
+            "misses": len(flattened) - len(hits_sh),
+            "user_id": user_id,
+            "top_score": _last_recalled[0].get("attention_score", 0.0) if _last_recalled else 0.0,
+        })
         return _last_recalled
 
 
@@ -576,7 +633,7 @@ def context(
     query: str,
     user_id: Optional[str] = None,
     max_tokens: int = 512,
-    model_family: str = "generic",
+    model_family: Optional[str] = None,   # Fix 3: None = use init() config default
     format: str = "auto",
     include_pins: bool = True,
     min_score: Optional[float] = None,
@@ -586,16 +643,18 @@ def context(
     Positions and formats memory per model family's attention patterns.
 
     model_family: "phi3" | "mistral" | "gemma" | "llama3" | "generic"
+                  None   = use the model_family set in nsn.init() (default: "generic")
     format:       "xml"  | "markdown" | "plain" | "auto"
     """
     _check_init()
+    _family = model_family or _config.get("model_family", "generic")
     threshold = min_score if min_score is not None else _config.get("recall_threshold", 0.6)
     memories = recall(query=query, user_id=user_id, top_k=20, min_score=threshold)
     return build_context(
         memories=memories,
         query=query,
         max_tokens=max_tokens,
-        model_family=model_family,
+        model_family=_family,
         fmt=format,
         include_pins=include_pins,
     )
@@ -625,6 +684,12 @@ def wrap(
     recommended = get_recommended_settings(strength)
     model_limit = get_model_context_limit(model_name)
 
+    # Fix 3: detect model family from function/model name, fall back to init() config
+    _wrap_family = (
+        _detect_model_family(model_name)
+        or _config.get("model_family", "generic")
+    )
+
     top_k = recommended["top_k"]
     threshold = _config.get("recall_threshold", 0.6)
     implicit = _config.get("implicit_feedback", True)
@@ -640,10 +705,34 @@ def wrap(
         prompt = kwargs.get("prompt") or (args[0] if args and isinstance(args[0], str) else "")
         return prompt
 
-    def _inject_context(query: str, args, kwargs) -> tuple:
+    def _inject_context(query: str, args, kwargs, active_user_id: Optional[str] = None) -> tuple:
         """Retrieve memories and inject into prompt/messages."""
         global _last_recalled
-        memories = recall(query=query, user_id=user_id, top_k=top_k,
+        
+        _uid = active_user_id or user_id
+
+        # --- Implicit Feedback Loop (New Turn) ---
+        if implicit and _last_recalled:
+            # We have memories from the PREVIOUS turn. 
+            # The current 'query' is the user's reaction to the agent's last answer.
+            # Send it to the backend as implicit feedback signal.
+            recall_ids = [str(m.get('id')) for m in _last_recalled if m.get('id')]
+            
+            # Fire-and-forget in a background thread to avoid blocking
+            import threading
+            def _send_feedback():
+                try:
+                    _remote_call(
+                        "POST", "/api/v1/feedback/implicit",
+                        json={"text": query, "memory_ids": recall_ids}
+                    )
+                except:
+                    pass # SDK never crashes on background telemetry
+            
+            threading.Thread(target=_send_feedback, daemon=True).start()
+
+        # --- Current Recall ---
+        memories = recall(query=query, user_id=_uid, top_k=top_k,
                           memory_types=memory_types, min_score=threshold)
         _last_recalled = memories
 
@@ -654,7 +743,7 @@ def wrap(
             memories=memories,
             query=query,
             max_tokens=min(512, _config.get("memory_window", 4096) // 2),
-            model_family="generic",
+            model_family=_wrap_family,   # Fix 3: use detected family, not hardcoded "generic"
         )
         if not ctx_str:
             return args, kwargs
@@ -684,13 +773,14 @@ def wrap(
             new_args = (augmented,) + (args[1:] if args else ())
             return new_args, kwargs
 
-    def _store_interaction(query: str, response: str):
+    def _store_interaction(query: str, response: str, active_user_id: Optional[str] = None):
         """Auto-log the interaction as an episodic memory."""
         if not query and not response:
             return
+        _uid = active_user_id or user_id
         try:
             content = f"User: {query}\nAgent: {response}" if query else f"Agent: {response}"
-            remember(content=content, user_id=user_id, type="episodic",
+            remember(content=content, user_id=_uid, type="episodic",
                      tags=["auto-wrap"])
         except Exception:
             pass
@@ -717,6 +807,7 @@ def wrap(
     _prev_query: Dict[str, Any] = {}  # closure state for implicit feedback
 
     def wrapped(*args, **kwargs) -> Any:
+        active_user_id = kwargs.get("user_id") or user_id
         query = _extract_query(args, kwargs)
 
         # Implicit feedback: evaluate previous turn's follow-up
@@ -734,7 +825,7 @@ def wrap(
             except Exception as e:
                 _logger.debug(f"[NeuroSleepNet] Implicit feedback failed: {e}")
 
-        new_args, new_kwargs = _inject_context(query, args, kwargs)
+        new_args, new_kwargs = _inject_context(query, args, kwargs, active_user_id)
 
         try:
             response = fn(*new_args, **new_kwargs)
@@ -743,7 +834,7 @@ def wrap(
             response = fn(*args, **kwargs)
 
         resp_str = str(response) if not isinstance(response, str) else response
-        _store_interaction(query, resp_str)
+        _store_interaction(query, resp_str, active_user_id)
 
         _prev_query["query"] = query
         _prev_query["memories"] = list(_last_recalled)
