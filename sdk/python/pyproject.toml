@@ -1,6 +1,6 @@
 [project]
 name = "neurosleepnet"
-version = "0.3.1"
+version = "0.3.2"
 description = "NeuroSleepNet — Enterprise-grade persistent memory and governance layer for AI agents with adaptive retrieval and consolidation."
 readme = "README.md"
 requires-python = ">=3.9"
