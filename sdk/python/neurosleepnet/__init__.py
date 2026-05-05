@@ -109,6 +109,7 @@ def init(
     debug: bool = False,
     data_dir: Optional[str] = None,
     embedding_model: Optional[str] = None,
+    synthesis_mode: bool = False,
 ):
     """Initialize NeuroSleepNet. Call once at startup."""
     with _ctx.lock:
@@ -145,6 +146,7 @@ def init(
             "debug": debug,
             "data_dir": data_dir,
             "embedding_model": embedding_model,
+            "synthesis_mode": synthesis_mode,
             "session_id": _ctx.session_id,
         }
 

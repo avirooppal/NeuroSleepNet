@@ -93,6 +93,16 @@ class LocalStore:
                     token_savings INTEGER DEFAULT 0,
                     settings TEXT DEFAULT '{}'
                 );
+
+                CREATE TABLE IF NOT EXISTS memory_links (
+                    source_id TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    relation_type TEXT DEFAULT 'related',
+                    weight REAL DEFAULT 1.0,
+                    PRIMARY KEY (source_id, target_id),
+                    FOREIGN KEY (source_id) REFERENCES memories(id) ON DELETE CASCADE,
+                    FOREIGN KEY (target_id) REFERENCES memories(id) ON DELETE CASCADE
+                );
             """)
             # FTS
             cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, content='memories', content_rowid='rowid')")
@@ -374,6 +384,33 @@ class LocalStore:
                 key=lambda x: (x.get("pinned", False), x["attention_score"]),
                 reverse=True
             )
+            
+            # --- V2: Stage 2 Re-ranking (Cognitive Precision) ---
+            # If we have many candidates, we perform a deeper check on the top 20
+            candidates = final[:max(top_k, 20)]
+            if len(candidates) > top_k:
+                # Calculate a 'nuance score' using keyword overlap + relation density
+                for m in candidates:
+                    if m.get("pinned"): continue
+                    
+                    # 1. Keyword density boost (FTS5 signal reinforcement)
+                    q_words = set(query.lower().split())
+                    m_words = set(m.get("content", "").lower().split())
+                    overlap = len(q_words.intersection(m_words))
+                    
+                    # 2. Relation density (Graph signal)
+                    # (Placeholder for future link-based scoring)
+                    
+                    # Update attention score with nuance
+                    m["attention_score"] = (m["attention_score"] * 0.7) + (min(1.0, overlap / 5.0) * 0.3)
+
+                # Final re-sort after Stage 2
+                final = sorted(
+                    candidates,
+                    key=lambda x: (x.get("pinned", False), x["attention_score"]),
+                    reverse=True
+                )
+
             top = final[:top_k]
 
             if top:
@@ -735,6 +772,33 @@ class LocalStore:
             c.commit()
 
         return stats
+
+    def merge_and_synthesize(self, project: str, memory_ids: List[str], 
+                             synthesized_content: str) -> str:
+        """
+        V2 Synthesis: Merges multiple episodic memories into one semantic node.
+        Archives the old ones and creates a link to the new 'master' fact.
+        """
+        with self._conn() as c:
+            cur = c.cursor()
+            
+            # 1. Create the new semantic node
+            mid = self.store(
+                content=synthesized_content,
+                project=project,
+                memory_type="semantic",
+                importance=0.9, # Synthesized facts are considered highly reliable
+                label="[synthesized]"
+            )
+            
+            # 2. Archive old memories and create graph links
+            for old_id in memory_ids:
+                cur.execute("UPDATE memories SET status='archived', deprecated_by=? WHERE id=?", (mid, old_id))
+                cur.execute("INSERT OR IGNORE INTO memory_links (source_id, target_id, relation_type) VALUES (?,?,?)",
+                            (old_id, mid, "synthesized_into"))
+            
+            c.commit()
+            return mid
 
     def get_sleep_log(self, project: str, limit: int = 10) -> List[Dict]:
         with self._conn() as c:

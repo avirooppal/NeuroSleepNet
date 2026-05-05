@@ -138,9 +138,47 @@ class LocalSleepEngine:
         try:
             logger.info("[NeuroSleepNet] Process exiting — running sleep consolidation (sleep_on_exit)...")
             stats = self.store.run_consolidation(project=self.project)
+            
+            # V2: Run one-off synthesis on exit if any high-consolidation clusters found
+            self._run_experimental_synthesis()
+            
             self._last_run = time.time()
             self._last_stats = stats
             self._run_count += 1
             logger.info(f"[NeuroSleepNet] Exit consolidation complete: {stats}")
         except Exception as e:
             logger.error(f"[NeuroSleepNet] Exit consolidation failed: {e}")
+
+    def _run_experimental_synthesis(self):
+        """
+        V2: Find clusters of episodic memories and 'synthesize' them.
+        (Experimental: currently uses a template-based merge if no LLM provided).
+        """
+        try:
+            from neurosleepnet import get_config
+            if not get_config().get("synthesis_mode"):
+                return
+            
+            # 1. Fetch episodic memories with high consolidation
+            mems = self.store.list_memories(self.project, limit=100)
+            episodics = [m for m in mems if m["memory_type"] == "episodic" and m["consolidation_score"] > 0.6]
+            
+            if len(episodics) < 3:
+                return
+
+            # 2. Simple clustering (by first 3 words for now as a V2 preview)
+            clusters = {}
+            for m in episodics:
+                prefix = " ".join(m["content"].lower().split()[:3])
+                clusters.setdefault(prefix, []).append(m)
+            
+            for prefix, cluster in clusters.items():
+                if len(cluster) >= 3:
+                    logger.info(f"[NeuroSleepNet V2] Synthesizing cluster: {prefix}...")
+                    ids = [m["id"] for m in cluster]
+                    # In a full LLM impl, we'd call the LLM here.
+                    # For now, we use the most recent one as the 'representative' fact.
+                    master_content = cluster[0]["content"]
+                    self.store.merge_and_synthesize(self.project, ids, master_content)
+        except Exception as e:
+            logger.debug(f"[NeuroSleepNet V2] Synthesis skipped: {e}")
