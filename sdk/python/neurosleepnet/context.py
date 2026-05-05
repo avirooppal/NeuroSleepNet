@@ -55,8 +55,20 @@ def classify_model_strength(model_name: str) -> str:
 
 def get_recommended_settings(strength: str) -> Dict[str, Any]:
     if strength == "WEAK":
-        return {"top_k": 3, "min_score": 0.30, "strict_prompting": True}
-    return {"top_k": 5, "min_score": 0.20, "strict_prompting": False}
+        # Lenient threshold for SLMs, less context to avoid distraction
+        return {
+            "top_k": 3,
+            "min_score": 0.32,
+            "strict_prompting": True,
+            "memory_window": 1024
+        }
+    # Strict threshold for strong models, more context for reasoning
+    return {
+        "top_k": 5,
+        "min_score": 0.55,
+        "strict_prompting": False,
+        "memory_window": 4096
+    }
 
 
 # ── Model-family format templates ─────────────────────────────────────────────

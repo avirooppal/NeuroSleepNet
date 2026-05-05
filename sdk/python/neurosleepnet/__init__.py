@@ -102,12 +102,12 @@ def init(
     sleep_interval: int = 300,
     sleep_on_exit: bool = True,
     embed_model: str = "local",
-    recall_threshold: float = 0.6,
+    recall_threshold: Optional[float] = None,
     implicit_feedback: bool = True,
     decay: bool = True,
     model_family: str = "generic",
     debug: bool = False,
-    data_dir: str = "~/.neurosleepnet",
+    data_dir: Optional[str] = None,
     embedding_model: Optional[str] = None,
 ):
     """Initialize NeuroSleepNet. Call once at startup."""
@@ -115,6 +115,19 @@ def init(
         log_level = logging.DEBUG if debug else logging.WARNING
         logging.basicConfig(level=log_level)
         _logger.setLevel(log_level)
+
+        # Adaptive Default: Colab-aware data_dir
+        if not data_dir:
+            is_colab = False
+            try:
+                import google.colab
+                is_colab = True
+            except ImportError: pass
+            
+            if is_colab and os.path.exists("/content/drive/MyDrive"):
+                data_dir = "/content/drive/MyDrive/neurosleepnet"
+            else:
+                data_dir = "~/.neurosleepnet"
 
         _ctx.config = {
             "project": project,
@@ -688,11 +701,19 @@ def wrap(
 
     fn: Any function fn(prompt: str) -> str  OR  fn(messages: list) -> str
     """
-    _check_init()
+    # Zero-config: init() is now called automatically in wrapped() if needed.
 
-    model_name = getattr(fn, "model", getattr(fn, "model_name", "unknown"))
+    # Fix 11: Adaptive defaults for different model strengths
     strength = classify_model_strength(model_name)
-    recommended = get_recommended_settings(strength)
+    rec = get_recommended_settings(strength)
+    
+    # User config in init() takes precedence over adaptive defaults.
+    threshold = _ctx.config.get("recall_threshold")
+    if threshold is None:
+        threshold = rec["min_score"]
+    
+    top_k = rec["top_k"] # Can be expanded in future to support wrap(top_k=...)
+
     model_limit = get_model_context_limit(model_name)
 
     # Fix 3: detect model family from function/model name, fall back to init() config
@@ -845,6 +866,11 @@ def wrap(
     _prev_query: Dict[str, Any] = {}  # closure state for implicit feedback
 
     def wrapped(*args, **kwargs) -> Any:
+        # Fix 12: Zero-config auto-init
+        if not _ctx.initialized:
+            _logger.info("[NeuroSleepNet] wrap() called before init(). Using smart defaults.")
+            init(project="auto-agent")
+
         active_user_id = kwargs.pop("user_id", None) or user_id
         query = _extract_query(args, kwargs)
 
