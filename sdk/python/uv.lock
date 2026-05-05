@@ -966,9 +966,11 @@ wheels = [
 
 [[package]]
 name = "neurosleepnet"
-version = "0.3.1"
+version = "0.3.3"
 source = { editable = "." }
 dependencies = [
+    { name = "fastembed", version = "0.7.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "fastembed", version = "0.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "httpx" },
     { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
@@ -991,6 +993,7 @@ openai = [
 
 [package.metadata]
 requires-dist = [
+    { name = "fastembed", specifier = ">=0.4.0" },
     { name = "fastembed", marker = "extra == 'all'", specifier = ">=0.4.0" },
     { name = "fastembed", marker = "extra == 'local'", specifier = ">=0.4.0" },
     { name = "httpx", specifier = ">=0.27.0" },

@@ -20,6 +20,8 @@ MODEL_CONTEXT_LIMITS: Dict[str, int] = {
     "llama-3.1-8b": 16384, "llama-3.1-70b": 16384,
     "llama3": 8192, "llama-3": 8192,
     "gemma": 8192, "gemma-2": 8192,
+    "qwen2": 32768, "qwen-2": 32768,
+    "stable-lm": 4096, "stablelm": 4096,
     "gpt-4o": 128000, "gpt-4o-mini": 128000, "gpt-4-turbo": 128000,
     "gpt-3.5-turbo": 16385,
     "claude-3": 200000, "claude": 200000,

@@ -48,6 +48,7 @@ from .context import (
     get_recommended_settings,
     safe_inject,
     estimate_tokens,
+    MODEL_FAMILY_TEMPLATES,
 )
 from .local_store import LocalStore
 from .local_sleep import LocalSleepEngine
@@ -148,6 +149,12 @@ def init(
                 sleep_on_exit=sleep_on_exit,
             )
             _ctx.sleep_engine.start()
+            
+            # Fix 5: Proactively trigger embedding load to detect issues at init time
+            try:
+                _ctx.embed._ensure_loaded()
+            except Exception as e:
+                _logger.warning(f"[NeuroSleepNet] Embedding engine warning: {e}")
 
             first_run = _ctx.local_store._is_first_run(project)
             _ctx.local_store.mark_seen(project)
@@ -742,12 +749,23 @@ def wrap(
         if not memories:
             return args, kwargs
 
+        # Fix 4: Token limit awareness. Estimate tokens in current query + prompt.
+        current_tokens = estimate_tokens(query)
+        # Add safety buffer
+        available_budget = max(0, model_limit - current_tokens - 256)
+        
+        # Respect the user's config memory_window if it's smaller than the model's budget
+        injection_budget = min(available_budget, _ctx.config.get("memory_window", 4096) // 2)
+
         ctx_str = build_context(
             memories=memories,
             query=query,
-            max_tokens=min(512, _ctx.config.get("memory_window", 4096) // 2),
+            max_tokens=injection_budget,
             model_family=_wrap_family,   # Fix 3: use detected family, not hardcoded "generic"
         )
+        
+        template = MODEL_FAMILY_TEMPLATES.get(_wrap_family, MODEL_FAMILY_TEMPLATES["generic"])
+        
         if ctx_str:
             _logger.debug(f"[NeuroSleepNet] Injected context: {ctx_str[:100]}...")
             # print(f"\n[DEBUG] Injected Context:\n{ctx_str}\n")

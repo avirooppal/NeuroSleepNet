@@ -459,13 +459,32 @@ def start_local_server(db_path: str, project: str, port: int = 3000) -> int:
 def open_dashboard(project: str, port: int, open_browser: bool = True):
     """Print dashboard URL and optionally open in browser."""
     proj_slug = project[:8]
-    url = f"http://localhost:{port}/p/{proj_slug}"
-    print(f"[NeuroSleepNet] Dashboard → {url}")
-    if open_browser:
+    
+    # Fix 7: Colab-aware dashboard URL
+    is_colab = False
+    try:
+        import google.colab
+        is_colab = True
+    except ImportError:
+        pass
+
+    if is_colab:
         try:
-            webbrowser.open(url)
+            from google.colab.output import proxy_port
+            url = f"https://localhost:{port}/p/{proj_slug}"
+            print(f"[NeuroSleepNet] Dashboard (Colab) → {url}")
+            print(f"[NeuroSleepNet] Note: Use the 'proxy_port' helper if the link doesn't open.")
         except Exception:
-            pass
+            url = f"http://localhost:{port}/p/{proj_slug}"
+            print(f"[NeuroSleepNet] Dashboard → {url}")
+    else:
+        url = f"http://localhost:{port}/p/{proj_slug}"
+        print(f"[NeuroSleepNet] Dashboard → {url}")
+        if open_browser:
+            try:
+                webbrowser.open(url)
+            except Exception:
+                pass
 
 def serve_dashboard_cli(db_path: str, project: str, port: int = 3000):
     """Start local dashboard HTTP server in foreground (blocking)."""
