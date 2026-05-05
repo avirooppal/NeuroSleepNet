@@ -73,15 +73,20 @@ class NSNAuthError(RuntimeError): pass
 class NSNConnectionError(RuntimeError): pass
 class NSNInitError(RuntimeError): pass
 
-# ── Global state ───────────────────────────────────────────────────────────────
+# ── Global State ──────────────────────────────────────────────────────────────
 
-_config: Dict[str, Any] = {}
-_local_store: Optional[LocalStore] = None
-_embed: Optional[EmbeddingManager] = None
-_sleep_engine: Optional[LocalSleepEngine] = None
-_last_recalled: List[Dict] = []
-_initialized = False
+class NSNContext:
+    def __init__(self):
+        self.config: Dict[str, Any] = {}
+        self.local_store: Optional[LocalStore] = None
+        self.embed: Optional[EmbeddingManager] = None
+        self.sleep_engine: Optional[LocalSleepEngine] = None
+        self.last_recalled: List[Dict] = []
+        self.initialized = False
+        self.session_id = str(_uuid.uuid4())
+        self.lock = threading.Lock()
 
+_ctx = NSNContext()
 _logger = logging.getLogger("neurosleepnet")
 
 
@@ -90,10 +95,8 @@ _logger = logging.getLogger("neurosleepnet")
 def init(
     project: str = "default",
     mode: str = "local",
-    # self-host
     host: Optional[str] = None,
     api_key: Optional[str] = None,
-    # memory behaviour
     memory_window: int = 4096,
     sleep_interval: int = 300,
     sleep_on_exit: bool = True,
@@ -101,84 +104,86 @@ def init(
     recall_threshold: float = 0.6,
     implicit_feedback: bool = True,
     decay: bool = True,
-    # Fix 3: project-level model family default used by wrap() and context()
     model_family: str = "generic",
     debug: bool = False,
-    # extra
     data_dir: str = "~/.neurosleepnet",
     embedding_model: Optional[str] = None,
 ):
     """Initialize NeuroSleepNet. Call once at startup."""
-    global _config, _local_store, _embed, _sleep_engine, _initialized
+    with _ctx.lock:
+        log_level = logging.DEBUG if debug else logging.WARNING
+        logging.basicConfig(level=log_level)
+        _logger.setLevel(log_level)
 
-    log_level = logging.DEBUG if debug else logging.WARNING
-    logging.basicConfig(level=log_level)
-    _logger.setLevel(log_level)
+        _ctx.config = {
+            "project": project,
+            "mode": mode,
+            "host": host or "http://localhost:8080/api",
+            "api_key": api_key,
+            "memory_window": memory_window,
+            "sleep_interval": sleep_interval,
+            "sleep_on_exit": sleep_on_exit,
+            "embed_model": embed_model,
+            "recall_threshold": recall_threshold,
+            "implicit_feedback": implicit_feedback,
+            "decay": decay,
+            "model_family": model_family,
+            "debug": debug,
+            "data_dir": data_dir,
+            "embedding_model": embedding_model,
+            "session_id": _ctx.session_id,
+        }
 
-    _config = {
-        "project": project,
-        "mode": mode,
-        "host": host or "http://localhost:8080/api",
-        "api_key": api_key,
-        "memory_window": memory_window,
-        "sleep_interval": sleep_interval,
-        "sleep_on_exit": sleep_on_exit,
-        "embed_model": embed_model,
-        "recall_threshold": recall_threshold,
-        "implicit_feedback": implicit_feedback,
-        "decay": decay,
-        "model_family": model_family,   # Fix 3: stored for use in wrap() + context()
-        "debug": debug,
-        "data_dir": data_dir,
-        "embedding_model": embedding_model,
-        "session_id": str(_uuid.uuid4()),
-    }
-
-    if mode == "local":
-        _local_store = LocalStore(data_dir=data_dir)
-        _embed = EmbeddingManager(
-            provider=embed_model,
-            model_name=embedding_model,
-            api_key=api_key,
-        )
-        _sleep_engine = LocalSleepEngine(
-            store=_local_store,
-            project=project,
-            interval_seconds=float(sleep_interval),
-            sleep_on_exit=sleep_on_exit,
-        )
-        _sleep_engine.start()
-
-        first_run = _local_store._is_first_run(project)
-        _local_store.mark_seen(project)
-
-        # Start local dashboard server
-        db_path = _local_store.db_path
-        dash_port = _dashboard_mod.start_local_server(db_path=db_path, project=project)
-        _config["dashboard_port"] = dash_port
-        
-        # Wire sleep trigger
-        if _sleep_engine:
-            _dashboard_mod.set_sleep_trigger(_sleep_engine.trigger_sleep)
-
-        if first_run:
-            _print_banner(project, embed_model, sleep_interval, sleep_on_exit, dash_port)
-        # subsequent runs: silent
-
-    elif mode == "self-host":
-        # Remote client path — delegates to HTTP API
-        try:
-            from .client import NeuroSleepClient
-            _config["_client"] = NeuroSleepClient(
-                base_url=_config["host"],
-                api_key=api_key or "",
+        if mode == "local":
+            _ctx.local_store = LocalStore(data_dir=data_dir)
+            _ctx.embed = EmbeddingManager(
+                provider=embed_model,
+                model_name=embedding_model,
+                api_key=api_key,
             )
-        except Exception as e:
-            raise NSNConnectionError(f"Could not connect to self-host at {_config['host']}: {e}")
-    else:
-        raise ValueError(f"[NeuroSleepNet] Unknown mode '{mode}'. Use 'local' or 'self-host'.")
+            _ctx.sleep_engine = LocalSleepEngine(
+                store=_ctx.local_store,
+                project=project,
+                interval_seconds=float(sleep_interval),
+                sleep_on_exit=sleep_on_exit,
+            )
+            _ctx.sleep_engine.start()
 
-    _initialized = True
+            first_run = _ctx.local_store._is_first_run(project)
+            _ctx.local_store.mark_seen(project)
+
+            # Start local dashboard server
+            db_path = _ctx.local_store.db_path
+            dash_port = _dashboard_mod.start_local_server(db_path=db_path, project=project)
+            _ctx.config["dashboard_port"] = dash_port
+            
+            # Wire sleep trigger
+            if _ctx.sleep_engine:
+                _dashboard_mod.set_sleep_trigger(_ctx.sleep_engine.trigger_sleep)
+
+            # Sync with CLI config for easy 'nsn dashboard' usage
+            try:
+                with open(".nsn.json", "w") as f:
+                    json.dump({"project_id": project, "data_dir": data_dir}, f, indent=2)
+            except Exception:
+                pass
+
+            if first_run:
+                _print_banner(project, embed_model, sleep_interval, sleep_on_exit, dash_port)
+
+        elif mode == "self-host":
+            try:
+                from .client import NeuroSleepClient
+                _ctx.config["_client"] = NeuroSleepClient(
+                    base_url=_ctx.config["host"],
+                    api_key=api_key or "",
+                )
+            except Exception as e:
+                raise NSNConnectionError(f"Could not connect to self-host at {_ctx.config['host']}: {e}")
+        else:
+            raise ValueError(f"[NeuroSleepNet] Unknown mode '{mode}'. Use 'local' or 'self-host'.")
+
+        _ctx.initialized = True
 
 
 def _print_banner(project: str, embed_model: str, sleep_interval: int, sleep_on_exit: bool, dash_port: int = 3000):
@@ -196,14 +201,14 @@ def _print_banner(project: str, embed_model: str, sleep_interval: int, sleep_on_
 
 
 def _check_init():
-    if not _initialized:
+    if not _ctx.initialized:
         raise NSNInitError("nsn.init() must be called before using NeuroSleepNet.")
 
 
 def _get_embedding(text: str) -> List[float]:
-    if _embed:
+    if _ctx.embed:
         try:
-            return _embed.embed_single(text)
+            return _ctx.embed.embed_single(text)
         except Exception:
             pass
     return []
@@ -221,14 +226,14 @@ def remember(
 ) -> Optional[Dict]:
     """Store a memory. Returns {id, status}."""
     _check_init()
-    if _config["mode"] == "local":
+    if _ctx.config["mode"] == "local":
         try:
             emb = _get_embedding(content)
-            mid = _local_store.store(
+            mid = _ctx.local_store.store(
                 content=content,
-                project=_config["project"],
+                project=_ctx.config["project"],
                 user_id=user_id,
-                session_id=_config["session_id"],
+                session_id=_ctx.config["session_id"],
                 tags=tags or [],
                 importance=importance,
                 memory_type=type,
@@ -246,7 +251,7 @@ def remember(
             return None
     else:
         return _remote_call("store_memory", content=content, user_id=user_id,
-                            project=_config["project"],
+                            project=_ctx.config["project"],
                             memory_type=type, importance=importance)
 
 
@@ -265,35 +270,34 @@ def recall(
     Returns List[Memory] with .content, .score, .id, .type, .pinned
     """
     _check_init()
-    global _last_recalled
 
-    threshold = min_score if min_score is not None else _config.get("recall_threshold", 0.6)
+    threshold = min_score if min_score is not None else _ctx.config.get("recall_threshold", 0.6)
 
-    if _config["mode"] == "local":
+    if _ctx.config["mode"] == "local":
         try:
             emb = _get_embedding(query)
             if emb:
-                candidates = _local_store.retrieve(
+                candidates = _ctx.local_store.retrieve(
                     query=query,
                     query_embedding=emb,
-                    project=_config["project"],
+                    project=_ctx.config["project"],
                     user_id=user_id,
                     top_k=top_k * 3,
                     memory_types=memory_types,
                     min_score=0.0,
                 )
-            elif _embed and _embed.is_tfidf():
+            elif _ctx.embed and _ctx.embed.is_tfidf():
                 # TF-IDF fallback path — populate index from store, query via cosine
-                all_mems = _local_store.list_memories(_config["project"], user_id=user_id, limit=2000)
-                tfidf = _embed.tfidf_index()
+                all_mems = _ctx.local_store.list_memories(_ctx.config["project"], user_id=user_id, limit=2000)
+                tfidf = _ctx.embed.tfidf_index()
                 known = set(tfidf._ids)
                 for m in all_mems:
                     if m["id"] not in known:
                         tfidf.add(m["id"], m.get("content", ""))
-                candidates = _local_store.retrieve(
+                candidates = _ctx.local_store.retrieve(
                     query=query,
                     query_embedding=None,
-                    project=_config["project"],
+                    project=_ctx.config["project"],
                     user_id=user_id,
                     top_k=top_k * 3,
                     memory_types=memory_types,
@@ -301,13 +305,13 @@ def recall(
                     tfidf_index=tfidf,
                 )
             else:
-                candidates = _local_store.search_text(
-                    query=query, project=_config["project"],
+                candidates = _ctx.local_store.search_text(
+                    query=query, project=_ctx.config["project"],
                     user_id=user_id, top_k=top_k,
                 )
         except Exception as e:
             _logger.warning(f"[NeuroSleepNet] recall() failed: {e}")
-            _last_recalled = []
+            _ctx.last_recalled = []
             return []
 
         # Gate: split into hits and misses
@@ -321,8 +325,8 @@ def recall(
             else:
                 # Log as miss
                 try:
-                    _local_store.log_miss(
-                        project=_config["project"],
+                    _ctx.local_store.log_miss(
+                        project=_ctx.config["project"],
                         query=query,
                         score=score,
                         threshold=threshold,
@@ -334,22 +338,22 @@ def recall(
                 except Exception:
                     pass
 
-        _last_recalled = hits[:top_k]
+        _ctx.last_recalled = hits[:top_k]
         _dashboard_mod.push_event("recall", {
             "query": query[:100],
-            "hits": len(_last_recalled),
+            "hits": len(_ctx.last_recalled),
             "misses": len(candidates) - len(hits),
             "user_id": user_id,
-            "top_score": _last_recalled[0].get("attention_score", 0.0) if _last_recalled else 0.0,
+            "top_score": _ctx.last_recalled[0].get("attention_score", 0.0) if _ctx.last_recalled else 0.0,
         })
-        return _last_recalled
+        return _ctx.last_recalled
     else:
         # Fix 11: pass min_score to the API so server applies gating where possible
         result = _remote_call(
             "retrieve",
             query=query,
             user_id=user_id,
-            project=_config["project"],
+            project=_ctx.config["project"],
             top_k=top_k * 3,  # fetch more so client-side gate can also filter
             memory_types=memory_types,
         )
@@ -382,15 +386,15 @@ def recall(
                     "reason": "below_threshold",
                 })
 
-        _last_recalled = hits_sh[:top_k]
+        _ctx.last_recalled = hits_sh[:top_k]
         _dashboard_mod.push_event("recall", {
             "query": query[:100],
-            "hits": len(_last_recalled),
+            "hits": len(_ctx.last_recalled),
             "misses": len(flattened) - len(hits_sh),
             "user_id": user_id,
-            "top_score": _last_recalled[0].get("attention_score", 0.0) if _last_recalled else 0.0,
+            "top_score": _ctx.last_recalled[0].get("attention_score", 0.0) if _ctx.last_recalled else 0.0,
         })
-        return _last_recalled
+        return _ctx.last_recalled
 
 
 # ── forget() ──────────────────────────────────────────────────────────────────
@@ -398,8 +402,8 @@ def recall(
 def forget(memory_id: str) -> Dict:
     """Forget a specific memory by ID."""
     _check_init()
-    if _config["mode"] == "local":
-        ok = _local_store.forget_by_id(memory_id, _config["project"])
+    if _ctx.config["mode"] == "local":
+        ok = _ctx.local_store.forget_by_id(memory_id, _ctx.config["project"])
         return {"deleted": ok, "id": memory_id}
     return _remote_call("forget_by_id", memory_id=memory_id)
 
@@ -407,8 +411,8 @@ def forget(memory_id: str) -> Dict:
 def forget_user(user_id: str) -> Dict:
     """Hard-delete all memories for a user (GDPR right-to-erasure)."""
     _check_init()
-    if _config["mode"] == "local":
-        count = _local_store.forget_user(user_id, _config["project"])
+    if _ctx.config["mode"] == "local":
+        count = _ctx.local_store.forget_user(user_id, _ctx.config["project"])
         return {"deleted": count, "user_id": user_id}
     return _remote_call("forget_user", user_id=user_id)
 
@@ -416,9 +420,9 @@ def forget_user(user_id: str) -> Dict:
 def forget_project(project: Optional[str] = None) -> Dict:
     """Delete all memories for a project."""
     _check_init()
-    proj = project or _config["project"]
-    if _config["mode"] == "local":
-        count = _local_store.forget_project(proj)
+    proj = project or _ctx.config["project"]
+    if _ctx.config["mode"] == "local":
+        count = _ctx.local_store.forget_project(proj)
         return {"deleted": count, "project": proj}
     return _remote_call("forget_project", project=proj)
 
@@ -436,11 +440,11 @@ def pin(
     user_id=None means the pin applies to all users in this project.
     """
     _check_init()
-    if _config["mode"] == "local":
+    if _ctx.config["mode"] == "local":
         emb = _get_embedding(content)
-        mid = _local_store.pin_memory(
+        mid = _ctx.local_store.pin_memory(
             content=content,
-            project=_config["project"],
+            project=_ctx.config["project"],
             user_id=user_id,
             label=label,
             embedding=emb if emb else None,
@@ -458,8 +462,8 @@ def unpin(memory_id: str, confirm: bool = False) -> Dict:
     _check_init()
     if not confirm:
         raise ValueError("unpin() requires confirm=True. Pins are permanent by design — pass confirm=True to proceed.")
-    if _config["mode"] == "local":
-        ok = _local_store.unpin_memory(memory_id, _config["project"])
+    if _ctx.config["mode"] == "local":
+        ok = _ctx.local_store.unpin_memory(memory_id, _ctx.config["project"])
         return {"unpinned": ok, "id": memory_id}
     return _remote_call("unpin", memory_id=memory_id)
 
@@ -467,8 +471,8 @@ def unpin(memory_id: str, confirm: bool = False) -> Dict:
 def list_pins(user_id: Optional[str] = None) -> List[Dict]:
     """List all pinned memories for the current project."""
     _check_init()
-    if _config["mode"] == "local":
-        return _local_store.list_pins(_config["project"], user_id=user_id)
+    if _ctx.config["mode"] == "local":
+        return _ctx.local_store.list_pins(_ctx.config["project"], user_id=user_id)
     return _remote_call("list_pins", user_id=user_id)
 
 
@@ -481,8 +485,8 @@ def feedback(
 ) -> Dict:
     """Explicit feedback — reinforce (helpful=True) or downweight (helpful=False) a recalled memory."""
     _check_init()
-    if _config["mode"] == "local":
-        ok = _local_store.update_feedback(memory_id=memory_id, project=_config["project"], helpful=helpful)
+    if _ctx.config["mode"] == "local":
+        ok = _ctx.local_store.update_feedback(memory_id=memory_id, project=_ctx.config["project"], helpful=helpful)
         return {"updated": ok, "memory_id": memory_id, "helpful": helpful}
     return _remote_call("feedback", memory_id=memory_id, helpful=helpful)
 
@@ -508,24 +512,24 @@ def feedback_batch(items: List[Dict]) -> Dict:
 def sleep(project: Optional[str] = None) -> Dict:
     """Manually trigger a sleep cycle (consolidation + dedup + promotion)."""
     _check_init()
-    if _config["mode"] == "local":
-        return _sleep_engine.run_now()
-    return _remote_call("trigger_sleep", project=project or _config["project"])
+    if _ctx.config["mode"] == "local":
+        return _ctx.sleep_engine.run_now()
+    return _remote_call("trigger_sleep", project=project or _ctx.config["project"])
 
 
 def sleep_status() -> Dict:
     """Get sleep engine status: last_sleep, next_sleep, cycles run, paused."""
     _check_init()
-    if _config["mode"] == "local":
-        return _sleep_engine.get_status()
+    if _ctx.config["mode"] == "local":
+        return _ctx.sleep_engine.get_status()
     return _remote_call("sleep_status")
 
 
 def sleep_pause() -> Dict:
     """Pause automatic sleep cycles."""
     _check_init()
-    if _config["mode"] == "local":
-        _sleep_engine.pause()
+    if _ctx.config["mode"] == "local":
+        _ctx.sleep_engine.pause()
         return {"paused": True}
     return _remote_call("sleep_pause")
 
@@ -533,8 +537,8 @@ def sleep_pause() -> Dict:
 def sleep_resume() -> Dict:
     """Resume automatic sleep cycles."""
     _check_init()
-    if _config["mode"] == "local":
-        _sleep_engine.resume()
+    if _ctx.config["mode"] == "local":
+        _ctx.sleep_engine.resume()
         return {"paused": False}
     return _remote_call("sleep_resume")
 
@@ -544,25 +548,25 @@ def sleep_resume() -> Dict:
 def list_memories(user_id: Optional[str] = None, limit: int = 50) -> List[Dict]:
     """List all memories for a user (or whole project if user_id=None)."""
     _check_init()
-    if _config["mode"] == "local":
-        return _local_store.list_memories(_config["project"], user_id=user_id, limit=limit)
+    if _ctx.config["mode"] == "local":
+        return _ctx.local_store.list_memories(_ctx.config["project"], user_id=user_id, limit=limit)
     return _remote_call("list_memories", user_id=user_id, limit=limit)
 
 
 def search(query: str, user_id: Optional[str] = None) -> List[Dict]:
     """Full-text search memories by content string."""
     _check_init()
-    if _config["mode"] == "local":
-        return _local_store.search_text(query, _config["project"], user_id=user_id)
+    if _ctx.config["mode"] == "local":
+        return _ctx.local_store.search_text(query, _ctx.config["project"], user_id=user_id)
     return _remote_call("search", query=query, user_id=user_id)
 
 
 def stats() -> Dict:
     """Return memory statistics for the current project."""
     _check_init()
-    if _config["mode"] == "local":
-        s = _local_store.get_stats(_config["project"])
-        s["sleep"] = _sleep_engine.get_status() if _sleep_engine else {}
+    if _ctx.config["mode"] == "local":
+        s = _ctx.local_store.get_stats(_ctx.config["project"])
+        s["sleep"] = _ctx.sleep_engine.get_status() if _ctx.sleep_engine else {}
         return s
     return _remote_call("stats")
 
@@ -570,10 +574,10 @@ def stats() -> Dict:
 def export(path: str) -> Dict:
     """Export all memories to a JSON file for backup/portability."""
     _check_init()
-    if _config["mode"] == "local":
-        items = _local_store.export_all(_config["project"])
+    if _ctx.config["mode"] == "local":
+        items = _ctx.local_store.export_all(_ctx.config["project"])
         payload = {
-            "project": _config["project"],
+            "project": _ctx.config["project"],
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "memories": items,
         }
@@ -589,8 +593,8 @@ def import_memories(path: str) -> Dict:
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
     items = raw.get("memories", raw) if isinstance(raw, dict) else raw
-    if _config["mode"] == "local":
-        count = _local_store.import_all(_config["project"], items)
+    if _ctx.config["mode"] == "local":
+        count = _ctx.local_store.import_all(_ctx.config["project"], items)
         return {"imported": count, "total": len(items)}
     return _remote_call("import_memories", items=items)
 
@@ -601,13 +605,13 @@ def merge_projects(source_project: str, target_project: Optional[str] = None) ->
     If target_project is None, merges into the current active project.
     """
     _check_init()
-    target = target_project or _config["project"]
-    if _config["mode"] == "local":
-        items = _local_store.export_all(source_project)
+    target = target_project or _ctx.config["project"]
+    if _ctx.config["mode"] == "local":
+        items = _ctx.local_store.export_all(source_project)
         if not items:
             return {"merged": 0, "source": source_project, "target": target, "status": "no_memories_found"}
         
-        count = _local_store.import_all(target, items)
+        count = _ctx.local_store.import_all(target, items)
         return {"merged": count, "source": source_project, "target": target}
     return _remote_call("merge_projects", source_project=source_project, target_project=target)
 
@@ -615,13 +619,13 @@ def merge_projects(source_project: str, target_project: Optional[str] = None) ->
 def dashboard(open_browser: bool = True):
     """Open the NeuroSleepNet dashboard in your browser."""
     _check_init()
-    proj = _config.get("project", "default")
-    if _config["mode"] == "local":
-        port = _config.get("dashboard_port", 3000)
+    proj = _ctx.config.get("project", "default")
+    if _ctx.config["mode"] == "local":
+        port = _ctx.config.get("dashboard_port", 3000)
         url = f"http://localhost:{port}/p/{proj[:8]}"
         _dashboard_mod.open_dashboard(proj, port, open_browser=open_browser)
     else:
-        url = f"{_config.get('host', 'http://localhost:8000').replace(':8000', ':3000')}/p/{proj[:8]}"
+        url = f"{_ctx.config.get('host', 'http://localhost:8000').replace(':8000', ':3000')}/p/{proj[:8]}"
         print(f"[NeuroSleepNet] Opening dashboard → {url}")
         if open_browser:
             webbrowser.open(url)
@@ -647,8 +651,8 @@ def context(
     format:       "xml"  | "markdown" | "plain" | "auto"
     """
     _check_init()
-    _family = model_family or _config.get("model_family", "generic")
-    threshold = min_score if min_score is not None else _config.get("recall_threshold", 0.6)
+    _family = model_family or _ctx.config.get("model_family", "generic")
+    threshold = min_score if min_score is not None else _ctx.config.get("recall_threshold", 0.6)
     memories = recall(query=query, user_id=user_id, top_k=20, min_score=threshold)
     return build_context(
         memories=memories,
@@ -687,12 +691,12 @@ def wrap(
     # Fix 3: detect model family from function/model name, fall back to init() config
     _wrap_family = (
         _detect_model_family(model_name)
-        or _config.get("model_family", "generic")
+        or _ctx.config.get("model_family", "generic")
     )
 
     top_k = recommended["top_k"]
-    threshold = _config.get("recall_threshold", 0.6)
-    implicit = _config.get("implicit_feedback", True)
+    threshold = _ctx.config.get("recall_threshold", 0.6)
+    implicit = _ctx.config.get("implicit_feedback", True)
 
     def _extract_query(args, kwargs) -> str:
         """Pull the user query string from positional or keyword args."""
@@ -707,16 +711,15 @@ def wrap(
 
     def _inject_context(query: str, args, kwargs, active_user_id: Optional[str] = None) -> tuple:
         """Retrieve memories and inject into prompt/messages."""
-        global _last_recalled
         
         _uid = active_user_id or user_id
 
         # --- Implicit Feedback Loop (New Turn) ---
-        if implicit and _last_recalled:
+        if implicit and _ctx.last_recalled:
             # We have memories from the PREVIOUS turn. 
             # The current 'query' is the user's reaction to the agent's last answer.
             # Send it to the backend as implicit feedback signal.
-            recall_ids = [str(m.get('id')) for m in _last_recalled if m.get('id')]
+            recall_ids = [str(m.get('id')) for m in _ctx.last_recalled if m.get('id')]
             
             # Fire-and-forget in a background thread to avoid blocking
             import threading
@@ -734,7 +737,7 @@ def wrap(
         # --- Current Recall ---
         memories = recall(query=query, user_id=_uid, top_k=top_k,
                           memory_types=memory_types, min_score=threshold)
-        _last_recalled = memories
+        _ctx.last_recalled = memories
 
         if not memories:
             return args, kwargs
@@ -742,9 +745,13 @@ def wrap(
         ctx_str = build_context(
             memories=memories,
             query=query,
-            max_tokens=min(512, _config.get("memory_window", 4096) // 2),
+            max_tokens=min(512, _ctx.config.get("memory_window", 4096) // 2),
             model_family=_wrap_family,   # Fix 3: use detected family, not hardcoded "generic"
         )
+        if ctx_str:
+            _logger.debug(f"[NeuroSleepNet] Injected context: {ctx_str[:100]}...")
+            # print(f"\n[DEBUG] Injected Context:\n{ctx_str}\n")
+        
         if not ctx_str:
             return args, kwargs
 
@@ -752,15 +759,28 @@ def wrap(
         messages = kwargs.get("messages") or (args[0] if args and isinstance(args[0], list) else None)
         if messages and isinstance(messages, list):
             new_messages = list(messages)
-            # Inject as system message at start if none exists, else prepend to first system
-            sys_idx = next((i for i, m in enumerate(new_messages) if m.get("role") == "system"), None)
-            if sys_idx is not None:
-                new_messages[sys_idx] = {
-                    **new_messages[sys_idx],
-                    "content": ctx_str + "\n\n" + new_messages[sys_idx]["content"],
-                }
+            pos = template.get("position", "system")
+            
+            if pos == "system":
+                # Inject as system message at start if none exists, else prepend to first system
+                sys_idx = next((i for i, m in enumerate(new_messages) if m.get("role") == "system"), None)
+                if sys_idx is not None:
+                    new_messages[sys_idx] = {
+                        **new_messages[sys_idx],
+                        "content": ctx_str + "\n\n" + new_messages[sys_idx]["content"],
+                    }
+                else:
+                    new_messages.insert(0, {"role": "system", "content": ctx_str})
             else:
-                new_messages.insert(0, {"role": "system", "content": ctx_str})
+                # 'top' or 'human' -> inject into the first user message
+                user_idx = next((i for i, m in enumerate(new_messages) if m.get("role") == "user"), None)
+                if user_idx is not None:
+                    new_messages[user_idx] = {
+                        **new_messages[user_idx],
+                        "content": ctx_str + "\n\n" + new_messages[user_idx]["content"],
+                    }
+                else:
+                    new_messages.insert(0, {"role": "user", "content": ctx_str})
             if "messages" in kwargs:
                 return args, {**kwargs, "messages": new_messages}
             new_args = (new_messages,) + args[1:]
@@ -807,7 +827,7 @@ def wrap(
     _prev_query: Dict[str, Any] = {}  # closure state for implicit feedback
 
     def wrapped(*args, **kwargs) -> Any:
-        active_user_id = kwargs.get("user_id") or user_id
+        active_user_id = kwargs.pop("user_id", None) or user_id
         query = _extract_query(args, kwargs)
 
         # Implicit feedback: evaluate previous turn's follow-up
@@ -837,7 +857,7 @@ def wrap(
         _store_interaction(query, resp_str, active_user_id)
 
         _prev_query["query"] = query
-        _prev_query["memories"] = list(_last_recalled)
+        _prev_query["memories"] = list(_ctx.last_recalled)
 
         return response
 
@@ -849,7 +869,7 @@ def wrap(
 # ── internal remote call helper ───────────────────────────────────────────────
 
 def _remote_call(method: str, **kwargs) -> Any:
-    client = _config.get("_client")
+    client = _ctx.config.get("_client")
     if not client:
         raise NSNInitError("Not connected to a self-host instance. Call nsn.init(mode='self-host', host=...) first.")
     try:
@@ -860,9 +880,9 @@ def _remote_call(method: str, **kwargs) -> Any:
 
 def get_config():
     """Return the active configuration dictionary."""
-    return _config
+    return _ctx.config
 
 
 def get_embed():
     """Return the active EmbeddingManager (for testing and introspection)."""
-    return _embed
+    return _ctx.embed

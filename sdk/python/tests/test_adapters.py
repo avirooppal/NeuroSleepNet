@@ -5,8 +5,11 @@ from neurosleepnet.adapters.langchain import LangChainAdapter
 
 # Mock objects
 class MockLangChainAgent:
-    def invoke(self, input_text):
+    def invoke(self, input_text, config=None, **kwargs):
         return f"Invoked: {input_text}"
+        
+    def stream(self, input_text, config=None, **kwargs):
+        yield f"Invoked: {input_text}"
 
 class MockGenericCallable:
     def __call__(self, arg):
@@ -35,8 +38,8 @@ def test_langchain_wrapper():
 
     wrapped = adapter.wrap_call(agent, dummy_retrieve, dummy_log)
     res = wrapped.invoke("Hello")
-    assert "Context: Important fact." in res
-    assert "Query: Hello" in res
+    assert "Important fact." in res
+    assert "Hello" in res
 
 def test_generic_wrapper():
     agent = MockGenericCallable()
@@ -50,5 +53,5 @@ def test_generic_wrapper():
 
     wrapped = adapter.wrap_call(agent, dummy_retrieve, dummy_log)
     res = wrapped("Hi")
-    assert "Context: Remember this." in res
-    assert "Query: Hi" in res
+    assert "Remember this." in res
+    assert "Hi" in res

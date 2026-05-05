@@ -49,7 +49,7 @@ def test_dashboard_api():
     resp = requests.get(f"{base_url}/api/stats?project=dashboard-test")
     print(f"GET /api/stats: {resp.status_code}")
     stats = resp.json()
-    print(f"Stats: memories={stats['total_memories']}, pins={stats['pinned']}, miss_count={stats['miss_count']}")
+    print(f"Stats: {stats}")
     assert stats['total_memories'] >= 2
     assert stats['pinned'] == 1
     

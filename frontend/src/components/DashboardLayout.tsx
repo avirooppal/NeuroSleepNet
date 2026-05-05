@@ -15,9 +15,6 @@ const DashboardLayout = ({ children }: { children: React.ReactNode }) => {
     { to: `/dashboard/${projectId}`,             icon: LayoutDashboard, label: "Dashboard" },
     { to: `/dashboard/${projectId}/pulse`,       icon: Activity,        label: "Memory Pulse" },
     { to: `/dashboard/${projectId}/memories`,    icon: Database,        label: "Memory Explorer" },
-    { to: `/dashboard/${projectId}/projects`,    icon: FolderOpen,      label: "Projects" },
-    { to: `/dashboard/${projectId}/benchmarks`,  icon: BarChart2,       label: "Benchmarks" },
-    { to: `/dashboard/${projectId}/settings`,    icon: Settings,        label: "Settings" },
   ];
 
   return (

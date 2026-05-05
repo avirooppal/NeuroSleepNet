@@ -44,7 +44,8 @@ def test_self_host_init():
     
     print("Testing recall()...")
     res = nsn.recall("Hello")
-    assert any("Hello world" in m["memory"]["content"] for m in res)
+    print("res:", res)
+    assert any("Hello world" in m["content"] for m in res)
     
     print("✅ SELF-HOST SDK VERIFICATION PASSED")
 

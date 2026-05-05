@@ -5,6 +5,7 @@ import sys
 import webbrowser
 import httpx
 from typing import Optional
+from .dashboard import serve_dashboard_cli
 
 # Base URL for local backend
 BACKEND_URL = os.environ.get("NSN_BACKEND_URL", "http://localhost:8000/api/v1")
@@ -97,13 +98,29 @@ def show_status():
     is_up = check_connectivity()
     print(f"Status:     {'ONLINE' if is_up else 'OFFLINE (Backend unreachable)'}")
 
-def open_dashboard():
-    """Opens the project dashboard in the browser."""
+def open_dashboard(local: bool = True, project: Optional[str] = None, data_dir: Optional[str] = None, port: int = 3000):
+    """Opens or serves the project dashboard."""
     config = get_project_config()
-    project_id = config.get("project_id", "default")
-    url = f"{DASHBOARD_URL}/dashboard/{project_id}"
-    print(f"[*] Opening dashboard: {url}")
-    webbrowser.open(url)
+    project_id = project or config.get("project_id", "default")
+    
+    # Auto-detect data_dir
+    if not data_dir:
+        data_dir = config.get("data_dir")
+    
+    if not data_dir:
+        if os.path.exists("./demo_data"):
+            data_dir = "./demo_data"
+        else:
+            data_dir = "~/.neurosleepnet"
+    
+    if local:
+        data_dir = os.path.expanduser(data_dir)
+        db_path = os.path.join(data_dir, "neurosleepnet.db")
+        serve_dashboard_cli(db_path=db_path, project=project_id, port=port)
+    else:
+        url = f"{DASHBOARD_URL}/dashboard/{project_id}"
+        print(f"[*] Opening dashboard: {url}")
+        webbrowser.open(url)
 
 # Bundled docker-compose template for PyPI users
 COMPOSE_TEMPLATE = """
@@ -158,6 +175,66 @@ services:
       - frontend
 """
 
+def manage_memories(action: str, query: Optional[str] = None, project: Optional[str] = None, data_dir: Optional[str] = None, user_id: Optional[str] = None):
+    """CLI helper to manage memories."""
+    config = get_project_config()
+    project_id = project or config.get("project_id", "default")
+    if not data_dir:
+        data_dir = config.get("data_dir") or ("./demo_data" if os.path.exists("./demo_data") else "~/.neurosleepnet")
+    
+    from .local_store import LocalStore
+    store = LocalStore(data_dir=data_dir)
+    
+    if action == "list":
+        mems = store.list_memories(project_id, limit=20)
+        print(f"\n--- Recent Memories ({project_id}) ---")
+        for m in mems:
+            print(f"[{m['memory_type'].upper()}] {m['content'][:80]}...")
+    elif action == "search" and query:
+        mems = store.search_text(query, project_id, limit=5)
+        print(f"\n--- Search Results for '{query}' ---")
+        for m in mems:
+            print(f"[{m['memory_type'].upper()}] (Score: {m['score']:.2f}) {m['content'][:80]}...")
+    elif action == "forget":
+        if user_id:
+            count = store.forget_user(user_id, project_id)
+            print(f"[+] Forgotten {count} memories for user '{user_id}'.")
+        else:
+            count = store.forget_project(project_id)
+            print(f"[+] Cleared {count} memories for project '{project_id}'.")
+
+def trigger_sleep_cli(project: Optional[str] = None, data_dir: Optional[str] = None):
+    """Manually trigger a sleep cycle from CLI."""
+    config = get_project_config()
+    project_id = project or config.get("project_id", "default")
+    if not data_dir:
+        data_dir = config.get("data_dir") or ("./demo_data" if os.path.exists("./demo_data") else "~/.neurosleepnet")
+    
+    from .local_store import LocalStore
+    store = LocalStore(data_dir=data_dir)
+    print(f"[*] Running sleep consolidation for {project_id}...")
+    stats = store.run_consolidation(project_id)
+    print(f"[+] Done! Boosted={stats['boosted']}, Deduped={stats['deduped']}, Promoted={stats['promoted']}")
+
+def show_stats_cli(project: Optional[str] = None, data_dir: Optional[str] = None):
+    """Show quick stats in terminal."""
+    config = get_project_config()
+    project_id = project or config.get("project_id", "default")
+    if not data_dir:
+        data_dir = config.get("data_dir") or ("./demo_data" if os.path.exists("./demo_data") else "~/.neurosleepnet")
+    
+    from .local_store import LocalStore
+    store = LocalStore(data_dir=data_dir)
+    s = store.get_stats(project_id)
+    print(f"\nNeuroSleepNet Stats: {project_id}")
+    print("-" * 40)
+    print(f"Total Memories:    {s['total_memories']}")
+    print(f"Health Score:      {s['health_score']:.2f}")
+    print(f"Pinned Rules:      {s['pinned']}")
+    print(f"Recall Misses:     {s['miss_count']}")
+    print(f"Sleep Cycles:      {s['sleep_cycles_run']}")
+    print("-" * 40 + "\n")
+
 def manage_stack(action: str):
     """Manages the docker-compose stack."""
     compose_file = "docker-compose.yml" if os.path.exists("docker-compose.yml") else "nsn-compose.yml"
@@ -199,11 +276,30 @@ def main():
     subparsers.add_parser("status", help="Show current project status")
 
     # dashboard
-    subparsers.add_parser("dashboard", help="Open the local dashboard")
+    dash_parser = subparsers.add_parser("dashboard", help="Open or serve the dashboard")
+    dash_parser.add_argument("--remote", action="store_true", help="Open the remote cloud dashboard instead of local")
+    dash_parser.add_argument("--project", help="Project ID to show (local mode)")
+    dash_parser.add_argument("--data-dir", help="Data directory (local mode)")
+    dash_parser.add_argument("--port", type=int, default=3000, help="Port to run on (local mode)")
 
     # stack
     stack_parser = subparsers.add_parser("stack", help="Manage the local docker stack")
     stack_parser.add_argument("action", choices=["up", "down", "reset"], help="Action to perform")
+
+    # memories
+    mem_parser = subparsers.add_parser("memories", help="List or search memories")
+    mem_parser.add_argument("action", choices=["list", "search", "forget"], default="list")
+    mem_parser.add_argument("query", nargs="?", help="Search query")
+    mem_parser.add_argument("--project", help="Project ID")
+    mem_parser.add_argument("--user", help="User ID (for forget action)")
+
+    # sleep
+    sleep_parser = subparsers.add_parser("sleep", help="Trigger manual sleep consolidation")
+    sleep_parser.add_argument("--project", help="Project ID")
+
+    # stats
+    stats_parser = subparsers.add_parser("stats", help="Show project statistics")
+    stats_parser.add_argument("--project", help="Project ID")
 
     args = parser.parse_args()
 
@@ -212,9 +308,15 @@ def main():
     elif args.command == "status":
         show_status()
     elif args.command == "dashboard":
-        open_dashboard()
+        open_dashboard(local=not args.remote, project=args.project, data_dir=args.data_dir, port=args.port)
     elif args.command == "stack":
         manage_stack(args.action)
+    elif args.command == "memories":
+        manage_memories(args.action, args.query, args.project, user_id=args.user)
+    elif args.command == "sleep":
+        trigger_sleep_cli(args.project)
+    elif args.command == "stats":
+        show_stats_cli(args.project)
     else:
         parser.print_help()
 

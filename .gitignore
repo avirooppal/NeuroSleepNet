@@ -1,179 +1,33 @@
-# ============================================================
-# NeuroSleepNet — .gitignore
-# ============================================================
-
-# ----------------------------------------------------------
 # Python
-# ----------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-*.pyd
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-!frontend/src/lib/
-!frontend/src/lib/**
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# ----------------------------------------------------------
-# Testing & Coverage
-# ----------------------------------------------------------
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# ----------------------------------------------------------
-# Virtual Environments
-# ----------------------------------------------------------
-.env
-.env.local
-.env.*.local
-.venv
+.venv/
 env/
 venv/
 ENV/
-env.bak/
-venv.bak/
 
-# ----------------------------------------------------------
-# Secrets & Keys (NEVER commit these)
-# ----------------------------------------------------------
-*.pem
-*.key
-*.p12
-*.pfx
-secrets/
-.secrets/
-# Keep .env.example (it's a template, not real secrets)
-!.env.example
+# NeuroSleepNet
+neurosleepnet.db
+neurosleepnet.db-journal
+neurosleepnet.db-wal
+.nsn.json
+agent_data/
+demo_data/
+.neurosleepnet/
 
-# ----------------------------------------------------------
-# Database & Runtime Artifacts
-# ----------------------------------------------------------
-*.db
-*.sqlite
-*.sqlite3
-# NSN offline cache
-.nsn/
-# Test/Benchmark temporary data
-test_dashboard_data/
-test_lc_data/
-portability_demo/
-benchmark_data/
-# Celery scheduler state
-celerybeat-schedule
-celerybeat-schedule-wal
-celerybeat-schedule-shm
-celerybeat.pid
+# Environment
+.env
+.env.test
 
-# ----------------------------------------------------------
-# Benchmark & Report Output
-# ----------------------------------------------------------
-report.html
-benchmark_mock.html
-results.json
-*.benchmark.json
-# Keep the scenarios and suite source, ignore generated output
-sdk/python/report.html
-sdk/python/benchmark_mock.html
-
-# ----------------------------------------------------------
-# Node / Frontend
-# ----------------------------------------------------------
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-dist/
-.next/
-out/
-.nuxt/
-.cache/
-
-# ----------------------------------------------------------
-# IDEs & Editors
-# ----------------------------------------------------------
+# IDEs
 .vscode/
 .idea/
-*.swp
-*.swo
-*.orig
-*.bak
-*~
 
-# ----------------------------------------------------------
-# OS Generated
-# ----------------------------------------------------------
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V*
-.Trashes
-ehthumbs.db
-Thumbs.db
-desktop.ini
+# Distribution
+dist/
+build/
+*.egg-info/
 
-# ----------------------------------------------------------
-# Docker & Infrastructure
-# ----------------------------------------------------------
-docker-compose.override.yml
-
-# ----------------------------------------------------------
-# Jupyter
-# ----------------------------------------------------------
-.ipynb_checkpoints
-*.ipynb
-
-# ----------------------------------------------------------
 # Logs
-# ----------------------------------------------------------
 *.log
-logs/
-*.out
-
-# ----------------------------------------------------------
-# Lock files (keep uv.lock at root, ignore nested ones)
-# ----------------------------------------------------------
-sdk/python/uv.lock
-
-# Internal planning / scratch docs (not for public repo)
-# ----------------------------------------------------------
-RUNBOOK.md
-FINAL_OVERVIEW.md

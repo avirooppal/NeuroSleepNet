@@ -81,35 +81,90 @@ class DashboardHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         qs = parse_qs(parsed.query)
-        project = qs.get("project", [self.project])[0]
-
-        if path.startswith("/api/"):
-            if path == "/api/stats":
-                self._json(self._get_stats(project))
-            elif path == "/api/memories":
+        
+        # 1. Resolve project
+        project_param = qs.get("project", qs.get("project_id", [self.project]))[0]
+        all_projs = self._get_all_projects()
+        project = next((p for p in all_projs if p == project_param or p.startswith(project_param)), project_param)
+        
+        # 2. API Routing
+        api_path = path[4:] if path.startswith("/v1/") else (path[5:] if path.startswith("/api/") else None)
+        
+        if api_path:
+            # Route to handlers
+            if api_path == "stats":
+                return self._json(self._get_stats(project))
+            if api_path in ("memories", "memories/retrieve"):
                 user_id = qs.get("user_id", [None])[0]
                 limit = int(qs.get("limit", ["100"])[0])
-                self._json(self._get_memories(project, user_id, limit))
-            elif path == "/api/pins":
-                user_id = qs.get("user_id", [None])[0]
-                self._json(self._get_pins(project, user_id))
-            elif path == "/api/misses":
-                limit = int(qs.get("limit", ["50"])[0])
-                self._json(self._get_misses(project, limit))
-            elif path == "/api/sleep":
-                limit = int(qs.get("limit", ["20"])[0])
-                self._json(self._get_sleep_log(project, limit))
-            elif path == "/api/events":
-                self._sse()
-            elif path == "/api/health":
-                self._json({"status": "ok", "project": project, "port": _server_port})
-            else:
-                self.send_response(404)
-                self._cors()
-                self.end_headers()
-        else:
-            # Serve static frontend files
-            self._serve_static(parsed.path)
+                mems = self._get_memories(project, user_id, limit)
+                return self._json({"memories": mems} if api_path == "memories/retrieve" else mems)
+            if api_path == "pins":
+                return self._json(self._get_pins(project, qs.get("user_id", [None])[0]))
+            if api_path == "misses":
+                return self._json(self._get_misses(project, int(qs.get("limit", ["50"])[0])))
+            if api_path == "sleep":
+                return self._json(self._get_sleep_log(project, int(qs.get("limit", ["20"])[0])))
+            if api_path == "events":
+                return self._sse()
+            if api_path == "health":
+                return self._json({"status": "ok", "project": project, "port": _server_port})
+            if api_path == "projects":
+                return self._json([{"id": p, "name": p} for p in all_projs])
+            if api_path == "benchmark":
+                return self._json(self._get_mock_benchmarks()) # Still mock for now
+            if api_path.startswith("benchmark/"):
+                return self._json(self._get_mock_benchmarks()[0])
+            if api_path == "analytics/attention":
+                return self._json(self._get_attention_data(project))
+            if api_path == "analytics/pathway-map":
+                return self._json(self._get_pathway_map(project))
+            
+            self.send_response(404)
+            self._cors()
+            self.end_headers()
+            return
+
+        # 3. Static Files
+        self._serve_static(path)
+
+    def _get_mock_benchmarks(self) -> List[Dict]:
+        return [{
+            "id": "bench-1", "model": "llama3.2:1b", "scenario": "recall",
+            "status": "completed", "score": 0.85, "control_score": 0.32,
+            "run_key": "seed-123", "created_at": "2024-05-03"
+        }]
+
+    def _get_attention_data(self, project: str) -> List[Dict]:
+        try:
+            with self._conn(project) as c:
+                rows = c.execute(
+                    "SELECT memory_type, COUNT(*) as count FROM memories WHERE project=? GROUP BY memory_type",
+                    (project,)
+                ).fetchall()
+                if not rows:
+                    return [{"type": "Semantic", "recalls": 0}]
+                return [{"type": r["memory_type"].capitalize(), "recalls": r["count"]} for r in rows]
+        except Exception:
+            return []
+
+    def _get_pathway_map(self, project: str) -> Dict:
+        # Simplified: top 10 memories as nodes, no links for now (requires embedding similarity matrix)
+        try:
+            with self._conn(project) as c:
+                rows = c.execute(
+                    "SELECT id, content, memory_type, feedback_score, importance FROM memories WHERE project=? LIMIT 10",
+                    (project,)
+                ).fetchall()
+                nodes = []
+                for r in rows:
+                    nodes.append({
+                        "id": r["id"], "content": r["content"][:60], "type": r["memory_type"],
+                        "feedback": r["feedback_score"] or 0.0, "importance": r["importance"] or 1.0, "size": 10
+                    })
+                return {"nodes": nodes, "links": []}
+        except Exception:
+            return {"nodes": [], "links": []}
 
     def _serve_static(self, path: str):
         # Default to index.html for SPA routing
@@ -148,7 +203,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(content)))
             self._cors()
             self.end_headers()
-            self.wfile.write(content)
+            try:
+                self.wfile.write(content)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
         except Exception:
             self.send_response(500)
             self.end_headers()
@@ -184,6 +242,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json({"status": "triggered"})
             else:
                 self._json({"status": "error", "message": "Sleep engine not connected"}, status=500)
+        elif path == "/api/benchmark/run":
+            self._json({"run_id": "bench-" + str(int(time.time())), "status": "started"})
         else:
             self.send_response(404)
             self._cors()
@@ -196,7 +256,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self._cors()
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _sse(self):
         self.send_response(200)
@@ -225,14 +288,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def _conn(self):
-        c = sqlite3.connect(self.db_path, timeout=10)
+    def _conn(self, project: str = None):
+        # Dynamically get the DB path if possible, else fallback to injected
+        from neurosleepnet import get_config
+        cfg = get_config()
+        p = project or self.project
+        if cfg and cfg.get("data_dir"):
+            db_file = os.path.join(cfg["data_dir"], "neurosleepnet.db")
+            c = sqlite3.connect(db_file, timeout=10)
+        else:
+            c = sqlite3.connect(self.db_path, timeout=10)
         c.row_factory = sqlite3.Row
         return c
 
     def _get_stats(self, project: str) -> Dict:
         try:
-            with self._conn() as c:
+            with self._conn(project) as c:
                 total = c.execute("SELECT COUNT(*) FROM memories WHERE project=? AND status='active'", (project,)).fetchone()[0]
                 archived = c.execute("SELECT COUNT(*) FROM memories WHERE project=? AND status='archived'", (project,)).fetchone()[0]
                 pinned = c.execute("SELECT COUNT(*) FROM memories WHERE project=? AND pinned=1 AND status='active'", (project,)).fetchone()[0]
@@ -282,7 +353,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _get_memories(self, project: str, user_id: Optional[str], limit: int) -> List[Dict]:
         try:
-            with self._conn() as c:
+            with self._conn(project) as c:
                 user_clause = " AND user_id=?" if user_id else ""
                 user_params = [user_id] if user_id else []
                 rows = c.execute(
@@ -295,7 +366,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _get_pins(self, project: str, user_id: Optional[str]) -> List[Dict]:
         try:
-            with self._conn() as c:
+            with self._conn(project) as c:
                 user_clause = " AND (user_id=? OR user_id IS NULL)" if user_id else ""
                 user_params = [user_id] if user_id else []
                 rows = c.execute(
@@ -308,7 +379,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _get_misses(self, project: str, limit: int) -> List[Dict]:
         try:
-            with self._conn() as c:
+            with self._conn(project) as c:
                 rows = c.execute(
                     "SELECT id, query, memory_content, score, threshold, reason, user_id, created_at FROM miss_log WHERE project=? ORDER BY created_at DESC LIMIT ?",
                     (project, limit)
@@ -317,9 +388,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             return []
 
-    def _get_sleep_log(self, project: str, limit: int) -> List[Dict]:
+    def _get_all_projects(self) -> List[str]:
         try:
             with self._conn() as c:
+                rows = c.execute("SELECT DISTINCT project FROM memories").fetchall()
+                return [r[0] for r in rows]
+        except Exception:
+            return [self.project]
+
+    def _get_sleep_log(self, project: str, limit: int) -> List[Dict]:
+        try:
+            with self._conn(project) as c:
                 rows = c.execute(
                     "SELECT id, project, boosted, decayed, archived, deduped, promoted, started_at, finished_at FROM sleep_log WHERE project=? ORDER BY finished_at DESC LIMIT ?",
                     (project, limit)
@@ -330,7 +409,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _delete_memory(self, memory_id: str, project: str):
         try:
-            with self._conn() as c:
+            with self._conn(project) as c:
                 c.execute("DELETE FROM memories WHERE id=? AND project=?", (memory_id, project))
                 c.commit()
         except Exception:
@@ -338,7 +417,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _unpin_memory(self, memory_id: str, project: str):
         try:
-            with self._conn() as c:
+            with self._conn(project) as c:
                 c.execute("UPDATE memories SET pinned=0 WHERE id=? AND project=?", (memory_id, project))
                 c.commit()
         except Exception:
@@ -387,3 +466,31 @@ def open_dashboard(project: str, port: int, open_browser: bool = True):
             webbrowser.open(url)
         except Exception:
             pass
+
+def serve_dashboard_cli(db_path: str, project: str, port: int = 3000):
+    """Start local dashboard HTTP server in foreground (blocking)."""
+    actual_port = _find_free_port(port)
+    
+    # Inject config into handler class
+    handler = type("Handler", (DashboardHandler,), {
+        "db_path": db_path,
+        "project": project,
+    })
+
+    server = DashboardServer(("", actual_port), handler)
+    proj_slug = project[:8]
+    url = f"http://localhost:{actual_port}/p/{proj_slug}"
+    
+    print("="*60)
+    print("  NeuroSleepNet Local Dashboard  ")
+    print("="*60)
+    print(f"  Project:   {project}")
+    print(f"  Database:  {db_path}")
+    print(f"  URL:       {url}")
+    print("="*60)
+    print("\nPress Ctrl+C to stop the server.\n")
+    
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n[*] Dashboard server stopped.")

@@ -6,7 +6,7 @@ import { motion } from 'framer-motion';
 import { Search, Trash2, Star, Archive, Filter, AlertTriangle } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/v1';
+const API = window.location.origin;
 const SCORE_COLORS: Record<string, string> = { Core: '#00e5cc', Established: '#4f9cf9', Developing: '#ffb347', Weak: '#ff6b6b' };
 
 function getLabel(score: number) {
@@ -28,13 +28,13 @@ export default function MemoryExplorer() {
   const { data, isLoading } = useQuery({
     queryKey: ['memories-explorer', projectId, query, filter, sortBy],
     queryFn: () =>
-      fetch(`${API}/memories/retrieve?query=${encodeURIComponent(query || 'memory')}&project_id=${projectId || ''}&top_k=200`, { headers })
+      fetch(`${API}/api/memories/retrieve?query=${encodeURIComponent(query || 'memory')}&project_id=${projectId || ''}&top_k=200`, { headers })
         .then(r => r.json()),
     keepPreviousData: true,
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => fetch(`${API}/memories/${id}`, { method: 'DELETE', headers }),
+    mutationFn: (id: string) => fetch(`${API}/api/memories/${id}`, { method: 'DELETE', headers }),
     onSuccess: () => { toast.success('Memory deleted'); qc.invalidateQueries({ queryKey: ['memories-explorer'] }); },
   });
 

@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import ResidualPathwayMap from '../components/ResidualPathwayMap';
 
-const API = import.meta.env.VITE_API_URL ?? 'http://localhost:8000/v1';
+const API = window.location.origin;
 
 export default function MemoryPulse() {
   const { projectId } = useParams();
@@ -12,7 +12,7 @@ export default function MemoryPulse() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['pathway-map', projectId],
-    queryFn: () => fetch(`${API}/analytics/pathway-map?project_id=${projectId || ''}&limit=200`, {
+    queryFn: () => fetch(`${API}/api/analytics/pathway-map?project_id=${projectId || ''}&limit=200`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(r => r.json()),
     refetchInterval: 30000,

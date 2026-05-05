@@ -121,9 +121,9 @@ MODEL_FAMILY_TEMPLATES = {
     # Llama-3: responds well to system-role XML
     "llama3": {
         "position": "top",
-        "prefix": "IMPORTANT: PREVIOUS CONTEXT FROM LONG-TERM MEMORY\n--------------------------------------------------\n",
-        "suffix": "\n--------------------------------------------------\nUse the above memory to answer the current request.\n\n",
-        "default_format": "plain",
+        "prefix": "### USER MEMORY & CONTEXT\nThe following facts are retrieved from your long-term memory. Use them to provide a personalized response:\n",
+        "suffix": "\n### END OF CONTEXT\n\n",
+        "default_format": "markdown",
     },
     # Generic fallback
     "generic": {

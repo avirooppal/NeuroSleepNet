@@ -10,7 +10,7 @@ import nsn
 data_dir = tempfile.mkdtemp()
 nsn.init(project="dash-test", data_dir=data_dir, sleep_interval=999999, sleep_on_exit=False)
 
-port = nsn._config["dashboard_port"]
+port = nsn.get_config()["dashboard_port"]
 print(f"Server started on port {port}")
 
 # Create some test data

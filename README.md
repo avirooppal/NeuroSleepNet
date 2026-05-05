@@ -1,90 +1,83 @@
 # NeuroSleepNet
 
-**Persistent memory for AI agents. Drop-in. Open-source. Fully Local.**
+**Intelligence consolidation for small language models (SLMs).**
 
-NeuroSleepNet gives your local LLMs and agents a biologically-inspired long-term memory layer. It eliminates "context-window amnesia" by automatically storing, retrieving, and consolidating memories in the background.
+NeuroSleepNet (NSN) is a persistent memory layer designed to give SLMs (like Llama 3.2 1b, Phi-3, or Mistral) "long-term memory" that survives process restarts and evolves through sleep cycles.
 
 ---
 
-## Quick Start
+## The 3-Line Magic
+Give your AI agent persistent memory with zero overhead.
+
+```python
+import nsn
+
+# 1. Zero-config init (auto-detects project & data)
+nsn.init(project="my-agent") 
+
+# 2. Wrap any LLM/SLM function
+chat = nsn.wrap(your_llm_call)
+
+# 3. Use it! Memory is now persistent and automatic.
+chat("Hi, I'm Avi. I like building robots.")
+```
+
+---
+
+##  Why NeuroSleepNet?
+
+- **Local-First**: No external vector DB setup required. Uses SQLite + BGE-Small for high-speed local recall.
+- **Autonomous Sleep Cycles**: Automatically consolidates episodic memories into semantic knowledge during background "sleep" cycles.
+- **Dynamic Governance**: Pin "personality" or "safety" rules that are never forgotten.
+- **Developer First**: Includes a powerful CLI and a neural graph dashboard.
+
+---
+
+##  Installation
 
 ```bash
 pip install neurosleepnet
 ```
 
-```python
-import neurosleepnet as nsn
+*Note: For local development, we recommend using [uv](https://github.com/astral-sh/uv).*
 
-# Zero-config initialization for local use
-nsn.init(project="my-agent-demo")
+---
 
-# Drop-in wrap for OpenAI, LangChain, HuggingFace, etc.
-agent = nsn.wrap(your_agent)
+##  CLI Tools
 
-# Your agent now remembers everything across sessions
-response = agent("What was my name again?")
-```
-
-### Run the Backend Locally
-
-NeuroSleepNet is designed to be self-hosted. Start the full stack (Vector DB, Redis, API, Dashboard) with one command:
+NSN comes with a first-class developer CLI to manage your agent's brain.
 
 ```bash
-docker compose up -d
+# Launch the visual dashboard
+nsn dashboard
+
+# Check memory health and stats
+nsn stats
+
+# Search through your agent's memories
+nsn memories search "robots"
+
+# Trigger an immediate sleep cycle (consolidation)
+nsn sleep
 ```
 
 ---
 
-## Why NeuroSleepNet?
-
-- **Biologically Inspired**: Implements a "Sleep Engine" that reinforces important memories and prunes irrelevant ones, just like the human brain.
-- **Local-First**: No API keys, no cloud lock-in. Your data stays on your infrastructure.
-- **Transparent Proxy**: Wrap your existing LLM clients or agents. `isinstance()` checks and attributes are preserved.
-- **Attention-based Retrieval**: Hybrid scoring using semantic similarity, recency, and consolidation strength.
-- **Offline Resilience**: Built-in SQLite cache means your agent keeps working even if the backend is temporarily unreachable.
+##  Visual Dashboard
+The NSN Dashboard provides a real-time view of your agent's neural pathways.
+- **Memory Pulse**: Track which facts are being recalled most.
+- **Recall Misses**: Debug why the agent failed to remember specific context.
+- **Pathway Map**: Visualize how episodic events consolidate into long-term facts.
 
 ---
 
-## Features
-
-- **Semantic Memory**: High-dimensional vector search for relevant context.
-- **Sleep Consolidation**: Automated background tasks for memory "dreaming" (reinforcement).
-- **Encryption at Rest**: All memories are AES-256 encrypted by default.
-- **PII Redaction**: Automatically scrubs sensitive data (emails, SSNs) before storage.
-- **Interactive Dashboard**: Explore memories, visualize the "Memory Pulse" graph, and debug retrieval in real-time.
+##  Repository Structure
+- `sdk/python/`: The core library and dashboard backend.
+- `frontend/`: Source code for the React-based dashboard.
+- `examples/`: Reference implementations for agents and bots.
+- `distributed/`: Optional components for cloud/multi-container deployments.
 
 ---
 
-## Framework Support
-
-| Framework | Status |
-|---|---|
-| LangChain (`AgentExecutor`, LCEL) | ✅ Native Support |
-| OpenAI SDK | ✅ Native Support |
-| HuggingFace `pipeline` | ✅ Native Support |
-| Anthropic / Claude | ✅ Native Support |
-| Ollama / Custom Callables | ✅ Native Support |
-
----
-
-## Local Development
-
-```bash
-# Install dependencies
-uv sync
-
-# Run the backend (FastAPI)
-cd backend && uv run uvicorn app.main:app --reload
-
-# Start workers for memory consolidation
-uv run celery -A app.workers.tasks worker -Q sleep --loglevel=info
-
-# Run the frontend (React)
-cd frontend && npm run dev
-```
-
----
-
-## License
-
-Apache 2.0 - See [LICENSE](LICENSE) for details.
+##  License
+MIT License. 

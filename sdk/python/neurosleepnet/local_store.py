@@ -21,6 +21,15 @@ class LocalStore:
         c.row_factory = sqlite3.Row
         return c
 
+    def _add_column_if_missing(self, table: str, column: str, definition: str):
+        with self._conn() as c:
+            cur = c.cursor()
+            try:
+                cur.execute(f"SELECT {column} FROM {table} LIMIT 1")
+            except sqlite3.OperationalError:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                c.commit()
+
     def _init_db(self):
         with self._conn() as c:
             cur = c.cursor()
@@ -51,9 +60,6 @@ class LocalStore:
                     last_consolidated_at TEXT,
                     expires_at TEXT
                 );
-                CREATE INDEX IF NOT EXISTS idx_mem_proj ON memories(project, status);
-                CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(project, user_id, status);
-                CREATE INDEX IF NOT EXISTS idx_mem_pinned ON memories(project, pinned, status);
 
                 CREATE TABLE IF NOT EXISTS miss_log (
                     id TEXT PRIMARY KEY,
@@ -98,13 +104,41 @@ class LocalStore:
                 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories
                 BEGIN INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.rowid, old.content); END;
             """)
+        
+        # Migrations for existing DBs
+        cols = {
+            "user_id": "TEXT",
+            "project": "TEXT NOT NULL DEFAULT 'default'",
+            "agent_id": "TEXT",
+            "session_id": "TEXT",
+            "memory_type": "TEXT DEFAULT 'episodic'",
+            "tags": "TEXT DEFAULT '[]'",
+            "importance": "REAL DEFAULT 1.0",
+            "consolidation_score": "REAL DEFAULT 0.5",
+            "feedback_score": "REAL DEFAULT 0.0",
+            "feedback_count": "INTEGER DEFAULT 0",
+            "access_count": "INTEGER DEFAULT 0",
+            "pinned": "INTEGER DEFAULT 0",
+            "label": "TEXT",
+            "status": "TEXT DEFAULT 'active'",
+            "version": "INTEGER DEFAULT 1",
+            "deprecated_by": "TEXT",
+            "embedding": "BLOB",
+            "last_accessed_at": "TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now'))",
+            "last_consolidated_at": "TEXT",
+            "expires_at": "TEXT"
+        }
+        for col, definition in cols.items():
+            self._add_column_if_missing("memories", col, definition)
+        
+        self._add_column_if_missing("project_meta", "settings", "TEXT DEFAULT '{}'")
+
+        # Post-migration indices
+        with self._conn() as c:
+            c.execute("CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(project, user_id, status)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_mem_proj ON memories(project, status)")
+            c.execute("CREATE INDEX IF NOT EXISTS idx_mem_pinned ON memories(project, pinned, status)")
             c.commit()
-            # Migration
-            try:
-                cur.execute("ALTER TABLE project_meta ADD COLUMN settings TEXT DEFAULT '{}'")
-                c.commit()
-            except sqlite3.OperationalError:
-                pass 
 
     # ── helpers ────────────────────────────────────────────────────────────────
 
@@ -559,6 +593,7 @@ class LocalStore:
             "by_type": by_type,
             "pinned": pinned,
             "avg_consolidation_score": round(float(avg_score), 3),
+            "health_score": round(min(1.0, float(avg_score) * 1.2), 2),
             "miss_count": miss_count,
             "recall_hit_count": recall_hit_count,
             "recall_hit_rate": recall_hit_rate,
