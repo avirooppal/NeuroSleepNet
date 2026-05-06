@@ -33,6 +33,7 @@ Issues = "https://github.com/avirooppal/NeuroSleepNet/issues"
 
 [project.scripts]
 nsn = "neurosleepnet.cli:main"
+nsn-bench = "neurosleepnet.benchmark.cli:main"
 
 [project.optional-dependencies]
 local = [
@@ -41,9 +42,14 @@ local = [
 openai = [
     "openai>=1.0.0",
 ]
+benchmark = [
+    "openai>=1.0.0",
+    "jinja2>=3.0.0",
+]
 all = [
     "fastembed>=0.4.0",
     "openai>=1.0.0",
+    "jinja2>=3.0.0",
 ]
 
 [build-system]
