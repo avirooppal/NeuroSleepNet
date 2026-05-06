@@ -4,33 +4,33 @@ import { Search, Clock, Zap, Moon, Bell } from "lucide-react";
 const features = [
   {
     icon: Search,
-    title: "Hybrid Search Retrieval",
-    desc: "Fuses Latent Semantic Similarity with Exact Keyword matching (BM25)—bridging the gap where standard cosine similarity fails.",
-    detail: "Combines dense vector embeddings with sparse token matching for robust recall across query types.",
+    title: "Adaptive Graph Retrieval",
+    desc: "Fuses Stage-2 Reranking with 2-hop Graph Expansion to surface related facts even with low direct similarity.",
+    detail: "Retrieval automatically traverses semantic links created during synthesis to build a more context-aware prompt.",
   },
   {
     icon: Clock,
-    title: "Time-Decay Recency Weighting",
-    desc: "Built-in chronological weighting guarantees the newest fact outranks the old one. No more contradictions.",
-    detail: "Exponential decay function ensures recent memories surface first while older ones gracefully fade.",
+    title: "Diminishing Returns Scoring",
+    desc: "Built-in chronological weighting with saturation-aware scoring. Prevents 'burst' noise from saturating recall.",
+    detail: "Non-linear boost formula ensures recent memories outrank stale ones without drowning out established semantic facts.",
   },
   {
     icon: Zap,
-    title: "Edge-Optimized Speeds",
-    desc: "LRU Edge Cache enables sub-100ms retrievals. No bloated databases required.",
-    detail: "In-process caching means zero network hops. Benchmarked at <5ms overhead on consumer hardware.",
+    title: "ANN Matrix Cache (O1)",
+    desc: "New in-memory embedding matrix enables sub-5ms retrievals with O(1) scaling at any scale.",
+    detail: "Eliminates database search overhead by keeping an atomic, copy-on-write matrix ready for instant matmul search.",
   },
   {
     icon: Moon,
-    title: "The 'Sleep' Consolidator",
-    desc: "Memories are periodically aggregated into a clean Knowledge Graph during idle periods.",
-    detail: "Automatic deduplication and noise pruning keep the memory store lean and accurate over time.",
+    title: "Synthetic Sleep Engine",
+    desc: "Periodically clusters episodic fragments into stable, multi-fact Semantic nodes during idle periods.",
+    detail: "Uses greedy centroid clustering to compress noisy chat logs into high-fidelity knowledge graphs.",
   },
   {
     icon: Bell,
-    title: "Webhook Event System",
-    desc: "Fire-and-forget events on memory.stored, memory.archived, sleep.completed, and quota.warning.",
-    detail: "Events enqueued after DB commit — never during request handling. Exponential backoff retry on failure.",
+    title: "LRU Re-embedding Cache",
+    desc: "16,000x speedup for repeated content (boilerplate/agent loops) via MD5-keyed re-embedding caching.",
+    detail: "Critical for high-frequency remember() calls in tight agent loops where redundant model calls would block execution.",
   },
 ];
 

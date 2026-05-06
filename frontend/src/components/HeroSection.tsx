@@ -1,8 +1,6 @@
 import { motion } from "framer-motion";
 import heroBlob from "@/assets/hero-blob.jpg";
 
-const COLAB_URL = "https://colab.research.google.com/github/avirooppal/NeuroSleepNet/blob/main/notebooks/NeuroSleepNet_Demo.ipynb";
-
 const stats = [
   { value: "+400%", label: "recall accuracy boost" },
   { value: "3/5", label: "augmented accuracy" },
@@ -57,7 +55,7 @@ const HeroSection = () => (
           >
             A lightweight, zero-ops memory layer for small, open-source models.
             Run offline, remember everything, and eradicate context-window amnesia.
-            Built with hybrid BM25 + semantic search, time-decay weighting, and an LRU edge cache.
+            Powered by the V2 Synthetic Reasoning Engine with ANN scaling and Graph Expansion.
           </motion.p>
 
           <motion.div
@@ -66,11 +64,11 @@ const HeroSection = () => (
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.7 }}
           >
+            <a href="https://pypi.org/project/neurosleepnet/" target="_blank" rel="noopener noreferrer" className="btn-primary-glow text-sm">
+              view on PyPI
+            </a>
             <a href="https://github.com/avirooppal/NeuroSleepNet" target="_blank" rel="noopener noreferrer" className="btn-outline-glow text-sm">
               view on GitHub
-            </a>
-            <a href={COLAB_URL} target="_blank" rel="noopener noreferrer" className="btn-primary-glow text-sm">
-              try demo
             </a>
           </motion.div>
 

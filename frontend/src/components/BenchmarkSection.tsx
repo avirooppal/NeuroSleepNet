@@ -2,9 +2,9 @@ import { motion } from "framer-motion";
 
 const SCENARIOS = [
   {
-    test: "Multi-Turn Recall",
-    baseline: 12,
-    augmented: 91,
+    test: "Multi-Turn Recall (12-turn developer test)",
+    baseline: 18,
+    augmented: 43,
   },
   {
     test: "Cross-Session Memory",

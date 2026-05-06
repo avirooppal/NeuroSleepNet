@@ -16,15 +16,15 @@ const CTASection = () => (
         </p>
       </motion.div>
       <motion.a
-        href={COLAB_URL}
+        href="https://pypi.org/project/neurosleepnet/"
         target="_blank"
         rel="noopener noreferrer"
-        className="btn-outline-glow text-sm"
+        className="btn-primary-glow text-sm"
         initial={{ opacity: 0, x: 20 }}
         whileInView={{ opacity: 1, x: 0 }}
         viewport={{ once: true }}
       >
-        Try Demo
+        View on PyPI
       </motion.a>
     </div>
   </section>

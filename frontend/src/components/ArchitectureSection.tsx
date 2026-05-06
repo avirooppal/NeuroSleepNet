@@ -7,7 +7,7 @@ const QUEUES = [
   {
     name: "sleep",
     label: "worker-sleep",
-    desc: "Nightly consolidation passes. Boosts high-utility memories, prunes stale ones.",
+    desc: "Synthetic Reasoning Engine. Clusters related episodic fragments into Semantic nodes via greedy centroid clustering.",
     color: "border-primary/40 bg-primary/5",
     accent: "text-primary",
     icon: Layers,
