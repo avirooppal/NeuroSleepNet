@@ -8,10 +8,10 @@ def main():
     parser = argparse.ArgumentParser(description="NeuroSleepNet Benchmark Runner")
     parser.add_argument("command", choices=["run"], help="Command to execute")
     parser.add_argument("--model", type=str, default="mock-model", help="Model to benchmark against")
-    parser.add_argument("--scenario", type=str, default="all", help="Specific scenario to run, or 'all'")
+    parser.add_argument("--scenario", "--scenarios", type=str, default="all", help="Specific scenario(s) to run, or 'all'")
     parser.add_argument("--api-key", type=str, default="demo_key", help="NeuroSleepNet API Key")
     parser.add_argument("--export-html", type=str, help="Path to export HTML report")
-    parser.add_argument("--export-json", type=str, help="Path to export JSON report")
+    parser.add_argument("--export-json", "--output", type=str, help="Path to export JSON report")
     parser.add_argument("--publish", action="store_true", help="Publish results to backend")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
