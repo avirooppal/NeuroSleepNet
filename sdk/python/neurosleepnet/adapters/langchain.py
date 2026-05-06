@@ -345,11 +345,14 @@ class LangChainAdapter(AbstractAdapter):
 
     @classmethod
     def detect(cls, agent: Any) -> bool:
+        """
+        P1-5: Module-name-only detection.
+        The old code also returned True for anything with .invoke() — this
+        shadowed Ollama, HuggingFace, and Generic adapters. LangChain objects
+        always live under a 'langchain*' module; that is sufficient.
+        """
         module_name = getattr(agent.__class__, '__module__', '')
-        return (
-            "langchain" in module_name.lower()
-            or hasattr(agent, 'invoke')
-        )
+        return "langchain" in module_name.lower()
 
     def inject_memory(self, *a, **kw):
         pass
@@ -406,11 +409,12 @@ class NSNMemory(BaseChatMemory):
         user_input = inputs.get("input", inputs.get("question", ""))
         if user_input:
             nsn.remember(str(user_input), user_id=self.user_id, type="episodic")
-        
-        # Store the agent output as agent memory
+
+        # P2-1: Agent outputs stored with lower base importance (0.6) so they
+        # don't crowd out user facts (which default to 1.0).
         agent_output = outputs.get("output", "")
         if agent_output:
-            nsn.remember(str(agent_output), user_id=self.user_id, type="agent")
+            nsn.remember(str(agent_output), user_id=self.user_id, type="agent", importance=0.6)
 
     def clear(self) -> None:
         """Clear is a no-op for persistent NSN memory (governance handles pruning)."""

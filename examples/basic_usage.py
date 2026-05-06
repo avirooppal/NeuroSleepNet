@@ -12,10 +12,8 @@ def llama_chat(messages):
     return resp.json().get("message", {}).get("content", "No content")
 
 # 2. THE THREE LINES OF MAGIC
-nsn.init(project="magic-demo", debug=True) # Line 1: Zero-config init
 llama_chat.model = "llama3.2:1b"
-chat = nsn.wrap(llama_chat)    # Line 2: Wrap any LLM function
-# chat("Line 3")                 # Line 3: Just call it!
+chat = nsn.wrap(llama_chat)  # Auto-initializes with smart defaults if init() is skipped
 
 # --- Test the magic ---
 print("Turn 1: Teaching the agent...")

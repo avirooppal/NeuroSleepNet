@@ -293,7 +293,7 @@ def recall(
     """
     _check_init()
 
-    threshold = min_score if min_score is not None else _ctx.config.get("recall_threshold", 0.6)
+    threshold = min_score if min_score is not None else (_ctx.config.get("recall_threshold") or 0.6)
 
     if _ctx.config["mode"] == "local":
         try:
@@ -674,7 +674,7 @@ def context(
     """
     _check_init()
     _family = model_family or _ctx.config.get("model_family", "generic")
-    threshold = min_score if min_score is not None else _ctx.config.get("recall_threshold", 0.6)
+    threshold = min_score if min_score is not None else (_ctx.config.get("recall_threshold") or 0.6)
     memories = recall(query=query, user_id=user_id, top_k=20, min_score=threshold)
     return build_context(
         memories=memories,
@@ -706,6 +706,7 @@ def wrap(
     # Zero-config: init() is now called automatically in wrapped() if needed.
 
     # Fix 11: Adaptive defaults for different model strengths
+    model_name = getattr(fn, "__name__", "generic")
     strength = classify_model_strength(model_name)
     rec = get_recommended_settings(strength)
     
@@ -724,8 +725,8 @@ def wrap(
         or _ctx.config.get("model_family", "generic")
     )
 
-    top_k = recommended["top_k"]
-    threshold = _ctx.config.get("recall_threshold", 0.6)
+    top_k = rec["top_k"]
+    threshold = _ctx.config.get("recall_threshold", rec["min_score"])
     implicit = _ctx.config.get("implicit_feedback", True)
 
     def _extract_query(args, kwargs) -> str:
@@ -744,25 +745,24 @@ def wrap(
         
         _uid = active_user_id or user_id
 
-        # --- Implicit Feedback Loop (New Turn) ---
-        if implicit and _ctx.last_recalled:
-            # We have memories from the PREVIOUS turn. 
-            # The current 'query' is the user's reaction to the agent's last answer.
-            # Send it to the backend as implicit feedback signal.
-            recall_ids = [str(m.get('id')) for m in _ctx.last_recalled if m.get('id')]
-            
-            # Fire-and-forget in a background thread to avoid blocking
-            import threading
-            def _send_feedback():
-                try:
-                    _remote_call(
-                        "POST", "/api/v1/feedback/implicit",
-                        json={"text": query, "memory_ids": recall_ids}
-                    )
-                except:
-                    pass # SDK never crashes on background telemetry
-            
-            threading.Thread(target=_send_feedback, daemon=True).start()
+        # --- Implicit Feedback Loop (P0-3 fix) ---
+        # Apply feedback for the PREVIOUS turn's recalled memories.
+        # Old code called a dead remote endpoint in local mode — fixed to
+        # dispatch directly to apply_implicit_feedback() from feedback.py.
+        if implicit and _ctx.last_recalled and query:
+            if _ctx.config["mode"] == "local" and _ctx.local_store:
+                from .feedback import apply_implicit_feedback as _apply_fb
+                import threading as _threading
+                _threading.Thread(
+                    target=_apply_fb,
+                    args=(
+                        _ctx.local_store,
+                        _ctx.config["project"],
+                        list(_ctx.last_recalled),
+                        query,
+                    ),
+                    daemon=True,
+                ).start()
 
         # --- Current Recall ---
         memories = recall(query=query, user_id=_uid, top_k=top_k,

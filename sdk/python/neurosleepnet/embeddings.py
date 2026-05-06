@@ -11,10 +11,108 @@ from __future__ import annotations
 import logging
 import math
 import re
+import threading
+import numpy as np
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("neurosleepnet.embed")
+
+
+# ── In-memory ANN embedding cache ─────────────────────────────────────────────
+
+class EmbeddingCache:
+    """
+    Thread-safe in-memory ANN cache for NeuroSleepNet.
+
+    Design decisions:
+    - RLock + copy-on-write: rebuild() and _flush_locked() swap the matrix
+      reference atomically. query() readers see a complete matrix, never a
+      partial write.
+    - List buffer in add(): avoids O(N) np.vstack on every remember() call.
+      Vectors accumulate in self._pending and are merged in batches
+      (every FLUSH_EVERY adds, or on query()).
+    - Per-project instances: LocalStore maintains one cache per project key.
+    """
+
+    FLUSH_EVERY = 10  # flush pending buffer to matrix every N adds
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._matrix: Optional[np.ndarray] = None   # shape (N, D), L2-normalised
+        self._ids: List[str] = []
+        self._pending: List[Tuple[str, np.ndarray]] = []  # add() buffer
+
+    def rebuild(self, rows: List[Tuple[str, bytes]]):
+        """Full rebuild from (memory_id, embedding_blob) pairs. Copy-on-write."""
+        if not rows:
+            return
+        new_ids = [r[0] for r in rows]
+        vecs = [np.frombuffer(r[1], dtype=np.float32) for r in rows]
+        mat = np.stack(vecs)                          # (N, D)
+        norms = np.linalg.norm(mat, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        new_mat = mat / norms                         # L2-normalised
+        with self._lock:                              # atomic swap
+            self._matrix = new_mat
+            self._ids = new_ids
+            self._pending = []                        # discard stale pending
+
+    def add(self, memory_id: str, embedding: List[float]):
+        """
+        Buffer a new vector. Avoids O(N) vstack on every remember() call.
+        Flushes to matrix automatically every FLUSH_EVERY adds.
+        """
+        vec = np.array(embedding, dtype=np.float32)
+        n = np.linalg.norm(vec)
+        if n > 0:
+            vec = vec / n
+        with self._lock:
+            self._pending.append((memory_id, vec))
+            if len(self._pending) >= self.FLUSH_EVERY:
+                self._flush_locked()
+
+    def _flush_locked(self):
+        """Merge pending buffer into matrix. Caller must hold self._lock."""
+        if not self._pending:
+            return
+        new_ids = [p[0] for p in self._pending]
+        new_vecs = np.stack([p[1] for p in self._pending])
+        if self._matrix is None:
+            self._matrix = new_vecs
+            self._ids = new_ids
+        else:
+            # copy-on-write: build new object, swap reference atomically
+            self._matrix = np.vstack([self._matrix, new_vecs])
+            self._ids = self._ids + new_ids
+        self._pending = []
+
+    def query(self, q_emb: List[float], top_k: int) -> List[Tuple[str, float]]:
+        """
+        Flush pending buffer then return [(id, cosine_score)] sorted descending.
+        Pure matmul — no DB round-trip.
+        """
+        with self._lock:
+            self._flush_locked()    # ensure all pending adds are visible
+            mat = self._matrix
+            ids = list(self._ids)
+        if mat is None or not ids:
+            return []
+        q = np.array(q_emb, dtype=np.float32)
+        qn = np.linalg.norm(q)
+        if qn == 0:
+            return []
+        q = q / qn
+        scores = mat @ q            # (N,) cosine scores, fast matmul
+        k = min(top_k, len(scores))
+        top_idx = np.argpartition(scores, -k)[-k:]
+        top_idx = top_idx[np.argsort(scores[top_idx])[::-1]]
+        return [(ids[i], float(scores[i])) for i in top_idx]
+
+    def size(self) -> int:
+        with self._lock:
+            return (len(self._ids) + len(self._pending))
+
 
 # ── TF-IDF implementation (zero-dependency) ────────────────────────────────────
 
@@ -113,6 +211,7 @@ class EmbeddingManager:
     """
 
     PROVIDER_ORDER = ["local", "openai", "cohere", "tfidf"]
+    _CACHE_MAX = 512
 
     def __init__(self, provider: str = "local", model_name: Optional[str] = None,
                  api_key: Optional[str] = None):
@@ -126,6 +225,7 @@ class EmbeddingManager:
         self._cohere_client = None
         self._tfidf = TFIDFIndex()
         self._loaded = False
+        self._embed_cache: Dict[str, List[float]] = {}
 
     def _default_model(self, provider: str, override: Optional[str]) -> str:
         if override:
@@ -249,7 +349,31 @@ class EmbeddingManager:
         # TF-IDF path — return empty vecs (retrieval done via tfidf.query())
         return [[] for _ in texts]
 
-    def embed_single(self, text: str) -> List[float]:
+    def embed_single(self, text: str) -> Optional[List[float]]:
+        """
+        Embed a single text string, with LRU cache (P1-4).
+        Cache key: MD5 of normalized text (strip + lower).
+        Cache hit avoids the full model round-trip — critical for remember()
+        calls on repeated/boilerplate content in tight agent loops.
+        """
+        import hashlib
+        key = hashlib.md5(text.strip().lower().encode()).hexdigest()
+
+        # Cache hit
+        if key in self._embed_cache:
+            return self._embed_cache[key]
+
+        # Cache miss — compute
+        result = self._embed_uncached(text)
+        if result is not None:
+            # Evict oldest if at capacity (dict insertion-order in Python 3.7+)
+            if len(self._embed_cache) >= self._CACHE_MAX:
+                self._embed_cache.pop(next(iter(self._embed_cache)))
+            self._embed_cache[key] = result
+        return result
+
+    def _embed_uncached(self, text: str) -> Optional[List[float]]:
+        """Raw embedding — called only on cache miss."""
         if not text.strip():
             return []
         results = self.embed([text])
@@ -267,3 +391,23 @@ class EmbeddingManager:
         """Seed the TF-IDF index from a list of memory dicts (id + content)."""
         for m in memories:
             self._tfidf.add(m["id"], m.get("content", ""))
+
+    def cross_score(self, query: str, doc_text: str) -> float:
+        """
+        Lightweight cross-encoder proxy.
+        Uses token-level intersection and density to provide a precision signal.
+        """
+        if not query or not doc_text:
+            return 0.0
+        # Use simple tokenize from this module
+        import re
+        def _local_tokenize(text):
+            return re.findall(r"\b[a-z]{2,}\b", text.lower())
+        
+        q_tokens = set(_local_tokenize(query))
+        d_tokens = set(_local_tokenize(doc_text))
+        if not q_tokens:
+            return 0.0
+        intersection = q_tokens.intersection(d_tokens)
+        # Ratio of query terms found in document
+        return len(intersection) / len(q_tokens)

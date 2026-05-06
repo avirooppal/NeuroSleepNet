@@ -5,6 +5,7 @@ import json, logging, os, re, sqlite3, uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 import numpy as np
+from .embeddings import EmbeddingCache
 
 logger = logging.getLogger("neurosleepnet.store")
 
@@ -14,6 +15,8 @@ class LocalStore:
         self.data_dir = os.path.expanduser(data_dir)
         os.makedirs(self.data_dir, exist_ok=True)
         self.db_path = os.path.join(self.data_dir, "neurosleepnet.db")
+        # Per-project ANN caches — populated lazily on first retrieve() call
+        self._caches: Dict[str, EmbeddingCache] = {}
         self._init_db()
 
     def _conn(self):
@@ -91,10 +94,11 @@ class LocalStore:
                     first_run INTEGER DEFAULT 1,
                     created_at TEXT DEFAULT (strftime('%Y-%m-%d %H:%M:%S','now')),
                     token_savings INTEGER DEFAULT 0,
-                    settings TEXT DEFAULT '{}'
+                    settings TEXT DEFAULT '{}',
+                    last_sleep_at TEXT
                 );
 
-                CREATE TABLE IF NOT EXISTS memory_links (
+                CREATE TABLE IF NOT EXISTS links (
                     source_id TEXT NOT NULL,
                     target_id TEXT NOT NULL,
                     relation_type TEXT DEFAULT 'related',
@@ -142,6 +146,7 @@ class LocalStore:
             self._add_column_if_missing("memories", col, definition)
         
         self._add_column_if_missing("project_meta", "settings", "TEXT DEFAULT '{}'")
+        self._add_column_if_missing("project_meta", "last_sleep_at", "TEXT")
 
         # Post-migration indices
         with self._conn() as c:
@@ -151,6 +156,103 @@ class LocalStore:
             c.commit()
 
     # ── helpers ────────────────────────────────────────────────────────────────
+
+    def _get_cache(self, project: str) -> EmbeddingCache:
+        """Return (and lazily warm) the per-project ANN cache."""
+        if project not in self._caches:
+            cache = EmbeddingCache()
+            self._warm_cache(project, cache)
+            self._caches[project] = cache
+        return self._caches[project]
+
+    def _warm_cache(self, project: str, cache: EmbeddingCache):
+        """Populate cache from existing DB rows on first access."""
+        try:
+            with self._conn() as c:
+                rows = c.execute(
+                    "SELECT id, embedding FROM memories "
+                    "WHERE project=? AND status='active' AND embedding IS NOT NULL",
+                    (project,)
+                ).fetchall()
+            blob_rows = [(r["id"], bytes(r["embedding"])) for r in rows]
+            if blob_rows:
+                cache.rebuild(blob_rows)
+                logger.debug(f"[NSN Cache] Warmed project '{project}' with {len(blob_rows)} embeddings")
+        except Exception as e:
+            logger.warning(f"[NSN Cache] Warm failed for '{project}': {e}")
+
+    def _get_embedding_blob(self, memory_id: str) -> Optional[bytes]:
+        """Fetch raw embedding blob for a single memory (used by synthesis clustering)."""
+        with self._conn() as c:
+            row = c.execute(
+                "SELECT embedding FROM memories WHERE id=?", (memory_id,)
+            ).fetchone()
+        return bytes(row["embedding"]) if row and row["embedding"] else None
+
+    def _access_velocity(self, access_count: int, created_at_str: str) -> float:
+        """
+        P1-7: Log-normalized access velocity signal.
+        raw_velocity = access_count / days_since_created (min 1 minute)
+        normalized   = log(1 + raw_velocity) / log(1 + 100)  -> [0, 1]
+        max weight contribution: 0.04 (tiebreaker only, never primary signal)
+        """
+        try:
+            created = datetime.strptime(created_at_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            days = max(1 / 1440, (datetime.now(timezone.utc) - created).total_seconds() / 86400)
+            raw_velocity = access_count / days
+            import math
+            return min(1.0, math.log(1 + raw_velocity) / math.log(1 + 100))
+        except Exception:
+            return 0.0
+
+    def _expand_graph(
+        self,
+        cur,
+        top_ids: List[str],
+        all_scores: Dict[str, float],
+        max_additional: int = 10,
+        max_hops: int = 2,
+    ) -> Dict[str, float]:
+        """
+        P1-6: BFS graph expansion — surfaces memories linked via the `links` table.
+        Capped at max_hops=2 and max_additional=10 to prevent unbounded fetches.
+        Linked memories receive a discounted score: parent_score * weight * 0.7^hop.
+        """
+        expanded: Dict[str, float] = {}
+        frontier = set(top_ids)
+        visited = set(top_ids)
+
+        for hop in range(max_hops):
+            if len(expanded) >= max_additional or not frontier:
+                break
+            placeholders = ",".join("?" * len(frontier))
+            frontier_list = list(frontier)
+            try:
+                rows = cur.execute(
+                    f"SELECT source_id, target_id, weight FROM links "
+                    f"WHERE source_id IN ({placeholders}) OR target_id IN ({placeholders})",
+                    frontier_list * 2,
+                ).fetchall()
+            except Exception:
+                break
+
+            next_frontier: set = set()
+            for row in rows:
+                row_dict = dict(row)  # sqlite3.Row has no .get() — convert first
+                src, tgt = row_dict["source_id"], row_dict["target_id"]
+                w = row_dict.get("weight", 0.5)
+                neighbor = tgt if src in frontier else src
+                if neighbor in visited:
+                    continue
+                parent_score = max((all_scores.get(sid, 0.0) for sid in frontier), default=0.0)
+                expanded[neighbor] = parent_score * w * (0.7 ** hop)
+                visited.add(neighbor)
+                next_frontier.add(neighbor)
+                if len(expanded) >= max_additional:
+                    break
+            frontier = next_frontier
+
+        return expanded
 
     def _sanitize(self, content: str) -> str:
         content = re.sub(r'<[^>]*?>', '', content)
@@ -218,6 +320,11 @@ class LocalStore:
                   json.dumps(tags or []), importance, emb_blob, expires_at,
                   1 if pinned else 0, label))
             c.commit()
+
+        # Update ANN cache incrementally (if cache already warmed for this project)
+        if embedding and project in self._caches:
+            self._caches[project].add(mid, embedding)
+
         return mid
 
     # ── retrieve ───────────────────────────────────────────────────────────────
@@ -236,7 +343,7 @@ class LocalStore:
 
     def _score_memory(self, similarity: float, recency: float, consolidation: float, 
                       feedback: float, importance: float, weights: dict) -> float:
-        """Port of attention.py score_memory for local store."""
+        """Calculate the attention score based on hybrid weights."""
         w = weights
         base_score = (
             (similarity * w.get("w_sim", 0.45)) +
@@ -245,6 +352,39 @@ class LocalStore:
             (feedback * w.get("w_fb", 0.15))
         )
         return base_score * importance
+
+    def _apply_stage2_reranking(self, query: str, candidates: List[Dict], top_k: int) -> List[Dict]:
+        """
+        V2: Stage 2 Re-ranking (Cognitive Precision).
+
+        Cross-score is a keyword-density refinement signal — it must boost
+        semantically strong results, not override them. Formula (P0-2 fix):
+          new_score = base * (1 + 0.20 * cross_score)  — only when base > 0.3
+        This means a perfect semantic match (base=0.9) gets at most +18%,
+        while a noise memory (base=0.1) is never promoted by keyword overlap.
+        """
+        if len(candidates) <= top_k:
+            return candidates
+
+        q_words = set(query.lower().split())
+        for m in candidates:
+            if m.get("pinned"):
+                continue
+            base = m["attention_score"]
+            if base <= 0.3 or not q_words:
+                # Below noise floor — cross-score cannot rescue it
+                continue
+            m_words = set(m.get("content", "").lower().split())
+            overlap = q_words.intersection(m_words)
+            cross_score = len(overlap) / len(q_words)
+            # Refine only — cap at 1.0
+            m["attention_score"] = min(1.0, base * (1.0 + 0.20 * cross_score))
+
+        return sorted(
+            candidates,
+            key=lambda x: (x.get("pinned", False), x["attention_score"]),
+            reverse=True
+        )
 
     def retrieve(self, query: str, query_embedding: Optional[List[float]], project: str,
                  user_id: Optional[str] = None, top_k: int = 5,
@@ -272,7 +412,7 @@ class LocalStore:
         with self._conn() as c:
             cur = c.cursor()
 
-            # Base filter
+            # Base filter clauses
             type_clause = ""
             type_params: list = []
             if memory_types:
@@ -324,37 +464,51 @@ class LocalStore:
                 except Exception:
                     pass
 
-            # 3. Semantic / TF-IDF signal
-            emb_filter = "AND embedding IS NOT NULL" if use_dense else ""
-            sem_rows = cur.execute(f"""
-                SELECT id, content, tags, importance, consolidation_score, feedback_score,
-                       memory_type, created_at, pinned, label, embedding
-                FROM memories
-                WHERE project=? AND status='active' {emb_filter}
-                {type_clause}{user_clause}
-            """, [project] + type_params + user_params).fetchall()
+            # 3a. Dense semantic signal via ANN cache (P0-1)
+            #     Query the in-memory matrix — no full-table embedding scan.
+            #     Then fetch only the candidate rows from DB by ID.
+            if use_dense:
+                cache = self._get_cache(project)
+                ann_results = cache.query(query_embedding, top_k=top_k * 4)
+                if ann_results:
+                    candidate_ids = [r[0] for r in ann_results]
+                    cosine_by_id = {r[0]: r[1] for r in ann_results}
 
-            now = datetime.now(timezone.utc)
+                    # Filter by user and memory_type in one DB fetch
+                    id_placeholders = ",".join("?" * len(candidate_ids))
+                    sem_rows = cur.execute(f"""
+                        SELECT id, content, tags, importance, consolidation_score,
+                               feedback_score, memory_type, created_at, pinned, label
+                        FROM memories
+                        WHERE id IN ({id_placeholders})
+                          AND project=? AND status='active'
+                          {type_clause}{user_clause}
+                    """, candidate_ids + [project] + type_params + user_params).fetchall()
+                else:
+                    sem_rows = []
+                    cosine_by_id = {}
+            else:
+                # 3b. Sparse / TF-IDF path — existing behaviour (no embedding scan)
+                sem_rows = cur.execute(f"""
+                    SELECT id, content, tags, importance, consolidation_score,
+                           feedback_score, memory_type, created_at, pinned, label
+                    FROM memories
+                    WHERE project=? AND status='active'
+                    {type_clause}{user_clause}
+                """, [project] + type_params + user_params).fetchall()
+                cosine_by_id = {}
+
             for row in sem_rows:
                 d = dict(row)
                 mid = d["id"]
-                if mid in results and results[mid].get("pinned"): continue
+                if mid in results and results[mid].get("pinned"):
+                    continue
 
-                if use_dense:
-                    m_emb = np.frombuffer(d.pop("embedding"), dtype=np.float32)
-                    mn = np.linalg.norm(m_emb)
-                    cosine = float(np.dot(q_emb, m_emb / mn)) if mn > 0 and qn > 0 else 0.0
-                else:
-                    d.pop("embedding", None)
-                    cosine = 0.0
+                cosine = cosine_by_id.get(mid, 0.0)
 
-                # Use _normalize_recency from local_store (already handles hours/log scale)
                 recency = self._normalize_recency(d["created_at"])
-
                 k_score = results.get(mid, {}).get("keyword_score", 0.0)
                 tfidf_score = tfidf_scores.get(mid, 0.0)
-
-                # Similarity is either cosine (dense) or tfidf (sparse) or keyword
                 sim = cosine if use_dense else max(tfidf_score, k_score)
 
                 attention = self._score_memory(
@@ -384,32 +538,45 @@ class LocalStore:
                 key=lambda x: (x.get("pinned", False), x["attention_score"]),
                 reverse=True
             )
-            
-            # --- V2: Stage 2 Re-ranking (Cognitive Precision) ---
-            # If we have many candidates, we perform a deeper check on the top 20
-            candidates = final[:max(top_k, 20)]
-            if len(candidates) > top_k:
-                # Calculate a 'nuance score' using keyword overlap + relation density
-                for m in candidates:
-                    if m.get("pinned"): continue
-                    
-                    # 1. Keyword density boost (FTS5 signal reinforcement)
-                    q_words = set(query.lower().split())
-                    m_words = set(m.get("content", "").lower().split())
-                    overlap = len(q_words.intersection(m_words))
-                    
-                    # 2. Relation density (Graph signal)
-                    # (Placeholder for future link-based scoring)
-                    
-                    # Update attention score with nuance
-                    m["attention_score"] = (m["attention_score"] * 0.7) + (min(1.0, overlap / 5.0) * 0.3)
 
-                # Final re-sort after Stage 2
-                final = sorted(
-                    candidates,
-                    key=lambda x: (x.get("pinned", False), x["attention_score"]),
-                    reverse=True
-                )
+            # Apply V2 Cognitive Re-ranking (P0-2 fix applied)
+            candidates = final[:max(top_k * 4, 20)]
+            final = self._apply_stage2_reranking(query, candidates, top_k)
+
+            # P1-6: Graph expansion — surface linked memories not in top candidates
+            top_scores = {m["id"]: m["attention_score"] for m in final[:top_k]}
+            if top_scores:
+                graph_scores = self._expand_graph(cur, list(top_scores.keys()), top_scores)
+                if graph_scores:
+                    graph_ids = list(graph_scores.keys())
+                    gid_placeholders = ",".join("?" * len(graph_ids))
+                    g_rows = cur.execute(f"""
+                        SELECT id, content, tags, importance, consolidation_score,
+                               feedback_score, memory_type, created_at, pinned, label
+                        FROM memories
+                        WHERE id IN ({gid_placeholders})
+                          AND project=? AND status='active'
+                    """, graph_ids + [project]).fetchall()
+                    for grow in g_rows:
+                        gd = dict(grow)
+                        gmid = gd["id"]
+                        if gmid not in results:
+                            gd.update({
+                                "attention_score": round(graph_scores[gmid], 4),
+                                "similarity": 0.0,
+                                "keyword_score": 0.0,
+                                "tags": json.loads(gd.get("tags") or "[]"),
+                                "pinned": bool(gd.get("pinned", 0)),
+                                "_graph_expanded": True,
+                            })
+                            final.append(gd)
+
+                    # Re-sort after graph injection
+                    final = sorted(
+                        final,
+                        key=lambda x: (x.get("pinned", False), x["attention_score"]),
+                        reverse=True,
+                    )
 
             top = final[:top_k]
 
@@ -422,8 +589,7 @@ class LocalStore:
                     )
                 c.commit()
 
-            # Fix 4: Update token_savings estimate.
-            # Savings = tokens in all candidate memories - tokens in injected top-k subset.
+            # Update token_savings estimate
             all_candidates_tokens = sum(len(v.get("content", "")) // 4 for v in final)
             injected_tokens = sum(len(m.get("content", "")) // 4 for m in top)
             savings_delta = max(0, all_candidates_tokens - injected_tokens)
@@ -435,6 +601,7 @@ class LocalStore:
                 c.commit()
 
             return top
+
 
     # ── text search (no embedding) ─────────────────────────────────────────────
 
@@ -690,10 +857,25 @@ class LocalStore:
         with self._conn() as c:
             cur = c.cursor()
 
-            # 1. Boost high-access memories
+            # Read last_sleep_at for incremental dedup (P0-4)
+            last_sleep_at = "1970-01-01 00:00:00"
+            if project:
+                row = cur.execute(
+                    "SELECT last_sleep_at FROM project_meta WHERE project=?", (project,)
+                ).fetchone()
+                if row and row["last_sleep_at"]:
+                    last_sleep_at = row["last_sleep_at"]
+
+            # 1. Boost high-access memories (P1-8: diminishing returns)
+            #    score += access_count * 0.08 / (1 + score)
+            #    Prevents a burst of 10 accesses before first sleep from
+            #    saturating the score in one cycle (old formula: +0.8 flat).
             cur.execute(f"""
                 UPDATE memories
-                SET consolidation_score = MIN(1.0, consolidation_score + (access_count * 0.08)),
+                SET consolidation_score = MIN(1.0,
+                        consolidation_score +
+                        (access_count * 0.08 / (1.0 + consolidation_score))
+                    ),
                     access_count = 0,
                     last_consolidated_at = strftime('%Y-%m-%d %H:%M:%S','now')
                 WHERE status='active' AND pinned=0 AND access_count > 0 {proj_clause}
@@ -717,9 +899,6 @@ class LocalStore:
             stats["archived"] = cur.rowcount
 
             # 4. Episodic → Semantic promotion
-            # A memory is promoted when consolidation_score >= 0.75 (encoded 3+ accesses + boosts).
-            # On promotion: re-type to 'semantic', bump importance, mark label as [consolidated].
-            # This makes promoted memories surface with higher confidence than fresh episodics.
             cur.execute(f"""
                 UPDATE memories
                 SET memory_type = 'semantic',
@@ -733,72 +912,149 @@ class LocalStore:
             """, proj_params)
             stats["promoted"] = cur.rowcount
 
-            # 5. Deduplication — cosine > 0.87 (tuned for real agent conversations)
-            # 0.92 was too tight; near-duplicates at 0.85-0.91 should still merge
-            rows = cur.execute(f"""
+            # 5. Incremental dedup (P0-4)
+            #    Only compare memories added SINCE last sleep against the full corpus.
+            #    This keeps dedup O(n·m) where m = new memories since last cycle.
+            new_rows = cur.execute(f"""
+                SELECT id, embedding, consolidation_score FROM memories
+                WHERE status='active' AND pinned=0 AND embedding IS NOT NULL
+                AND created_at >= ? {proj_clause}
+            """, [last_sleep_at] + proj_params).fetchall()
+
+            all_rows = cur.execute(f"""
                 SELECT id, embedding, consolidation_score FROM memories
                 WHERE status='active' AND pinned=0 AND embedding IS NOT NULL {proj_clause}
             """, proj_params).fetchall()
 
-            archived_ids = set()
-            row_list = [(r["id"], np.frombuffer(r["embedding"], dtype=np.float32), r["consolidation_score"]) for r in rows]
+            all_vecs = [
+                (r["id"], np.frombuffer(r["embedding"], dtype=np.float32), r["consolidation_score"])
+                for r in all_rows
+            ]
+            archived_ids: set = set()
 
-            for i in range(len(row_list)):
-                if row_list[i][0] in archived_ids: continue
-                ei = row_list[i][1]
-                ni = np.linalg.norm(ei)
-                if ni == 0: continue
-                ei_norm = ei / ni
-                for j in range(i + 1, len(row_list)):
-                    if row_list[j][0] in archived_ids: continue
-                    ej = row_list[j][1]
-                    nj = np.linalg.norm(ej)
-                    if nj == 0: continue
-                    sim = float(np.dot(ei_norm, ej / nj))
+            for new_r in new_rows:
+                nid = new_r["id"]
+                if nid in archived_ids:
+                    continue
+                ne = np.frombuffer(new_r["embedding"], dtype=np.float32)
+                nn = np.linalg.norm(ne)
+                if nn == 0:
+                    continue
+                ne_norm = ne / nn
+                n_score = new_r["consolidation_score"]
+
+                for aid, ae, a_score in all_vecs:
+                    if aid == nid or aid in archived_ids:
+                        continue
+                    an = np.linalg.norm(ae)
+                    if an == 0:
+                        continue
+                    sim = float(np.dot(ne_norm, ae / an))
                     if sim > 0.87:
-                        # Archive the one with lower consolidation score
-                        keep_idx, drop_idx = (i, j) if row_list[i][2] >= row_list[j][2] else (j, i)
-                        drop_id = row_list[drop_idx][0]
+                        # Archive lower-scored duplicate
+                        drop_id = nid if n_score < a_score else aid
                         archived_ids.add(drop_id)
-                        cur.execute("UPDATE memories SET status='archived' WHERE id=?", (drop_id,))
+                        cur.execute(
+                            "UPDATE memories SET status='archived' WHERE id=?",
+                            (drop_id,)
+                        )
                         stats["deduped"] += 1
 
             # Log sleep cycle
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             cur.execute("""
                 INSERT INTO sleep_log (id, project, boosted, decayed, archived, deduped, promoted, started_at, finished_at)
                 VALUES (?,?,?,?,?,?,?,strftime('%Y-%m-%d %H:%M:%S','now'),strftime('%Y-%m-%d %H:%M:%S','now'))
             """, (str(uuid.uuid4()), project or "all", stats["boosted"], stats["decayed"],
                   stats["archived"], stats["deduped"], stats["promoted"]))
+
+            # Persist last_sleep_at so next cycle only dedupes new memories (P0-4)
+            if project:
+                cur.execute(
+                    "UPDATE project_meta SET last_sleep_at=? WHERE project=?",
+                    (now_str, project)
+                )
+
             c.commit()
+
+        # Invalidate ANN cache for this project so next recall() re-warms cleanly
+        if project and project in self._caches:
+            del self._caches[project]
 
         return stats
 
-    def merge_and_synthesize(self, project: str, memory_ids: List[str], 
-                             synthesized_content: str) -> str:
+    def merge_memories(self, project: str, memory_ids: List[str],
+                       synthesized_content: str) -> str:
         """
-        V2 Synthesis: Merges multiple episodic memories into one semantic node.
-        Archives the old ones and creates a link to the new 'master' fact.
+        V2 Synthesis: Merges episodic memories into one semantic master node.
+        Archives originals, writes graph links, and seeds the master node with
+        the cluster's avg consolidation_score so it surfaces in recall immediately
+        (without waiting for the next sleep cycle).
         """
+        # Read cluster stats BEFORE opening the write connection
+        # (store() opens its own connection; nesting causes empty embeddings)
+        with self._conn() as c:
+            placeholders = ",".join("?" * len(memory_ids))
+            src_rows = c.execute(
+                f"SELECT consolidation_score, importance FROM memories WHERE id IN ({placeholders})",
+                memory_ids
+            ).fetchall()
+        avg_consolidation = (
+            sum(r["consolidation_score"] for r in src_rows) / max(1, len(src_rows))
+        )
+        max_importance = max((r["importance"] for r in src_rows), default=0.9)
+
+        # 1. Compute embedding for the synthesized content so the master node
+        #    is immediately queryable via ANN cache after cache invalidation.
+        #    Use the global embed manager if available (import-mode); fall back
+        #    to None (TF-IDF retrieval will still work).
+        master_embedding = None
+        try:
+            from . import _ctx as _nsn_ctx
+            if _nsn_ctx.embed is not None:
+                master_embedding = _nsn_ctx.embed.embed_single(synthesized_content)
+        except Exception:
+            pass
+
+        # Create the semantic master node
+        mid = self.store(
+            content=synthesized_content,
+            project=project,
+            memory_type="semantic",
+            importance=min(1.0, max(0.9, max_importance)),
+            label="[synthesized]",
+            embedding=master_embedding,
+        )
+
+        # 2. Apply cluster consolidation boost + archive originals + write links
         with self._conn() as c:
             cur = c.cursor()
-            
-            # 1. Create the new semantic node
-            mid = self.store(
-                content=synthesized_content,
-                project=project,
-                memory_type="semantic",
-                importance=0.9, # Synthesized facts are considered highly reliable
-                label="[synthesized]"
+
+            # Seed master with cluster's avg so it ranks highly immediately
+            cur.execute(
+                "UPDATE memories SET consolidation_score=? WHERE id=?",
+                (min(1.0, avg_consolidation + 0.1), mid)
             )
-            
-            # 2. Archive old memories and create graph links
+
             for old_id in memory_ids:
-                cur.execute("UPDATE memories SET status='archived', deprecated_by=? WHERE id=?", (mid, old_id))
-                cur.execute("INSERT OR IGNORE INTO memory_links (source_id, target_id, relation_type) VALUES (?,?,?)",
-                            (old_id, mid, "synthesized_into"))
-            
+                cur.execute(
+                    "UPDATE memories SET status='archived', deprecated_by=? WHERE id=?",
+                    (mid, old_id)
+                )
+                cur.execute(
+                    "INSERT OR IGNORE INTO links (source_id, target_id, relation_type) "
+                    "VALUES (?,?,?)",
+                    (old_id, mid, "synthesized_into")
+                )
+
             c.commit()
-            return mid
+
+        # Invalidate ANN cache — master node must be visible on next recall()
+        if project in self._caches:
+            del self._caches[project]
+
+        return mid
+
 
     def get_sleep_log(self, project: str, limit: int = 10) -> List[Dict]:
         with self._conn() as c:

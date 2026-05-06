@@ -12,18 +12,74 @@ import atexit
 import logging
 import threading
 import time
+from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("neurosleepnet.sleep")
 
 
+# ── Jaccard-dedup sentence synthesizer (P1-2) ─────────────────────────────────
+
+def _jaccard(a: str, b: str) -> float:
+    """Jaccard similarity on word sets."""
+    wa, wb = set(a.lower().split()), set(b.lower().split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+def _jaccard_synthesize(cluster: List[Dict], max_sentences: int = 3) -> str:
+    """
+    P1-2: Real fallback synthesis using Jaccard-dedup sentence concatenation.
+
+    Algorithm:
+    1. Split every memory into sentences (split on . ! ?).
+    2. Sort sentences by length descending (longer = more informative).
+    3. Greedily select sentences where Jaccard vs all already-selected < 0.5.
+    4. Take up to max_sentences.
+    5. Join with space.
+
+    This produces a genuine multi-fact summary without requiring an LLM,
+    replacing the old 'longest content wins' selection.
+    """
+    import re
+    all_sentences: List[str] = []
+    for m in cluster:
+        raw = m.get("content", "").strip()
+        parts = re.split(r'(?<=[.!?])\s+', raw)
+        all_sentences.extend([s.strip() for s in parts if len(s.strip()) > 10])
+
+    if not all_sentences:
+        return cluster[0]["content"]
+
+    # Longer sentences carry more information — prefer them
+    candidates = sorted(all_sentences, key=len, reverse=True)
+    selected: List[str] = []
+    for candidate in candidates:
+        if all(_jaccard(candidate, s) < 0.5 for s in selected):
+            selected.append(candidate)
+        if len(selected) >= max_sentences:
+            break
+
+    return " ".join(selected) if selected else cluster[0]["content"]
+
+
+class Synthesizer(ABC):
+    @abstractmethod
+    def synthesize(self, memories: List[Dict]) -> str:
+        """Synthesize multiple memories into a single semantic fact."""
+        pass
+
+
 class LocalSleepEngine:
     def __init__(self, store, project: Optional[str] = None,
-                 interval_seconds: float = 300.0, sleep_on_exit: bool = True):
+                 interval_seconds: float = 300.0, sleep_on_exit: bool = True,
+                 synthesizer: Optional[Synthesizer] = None):
         self.store = store
         self.project = project
         self.interval_seconds = interval_seconds
+        self.synthesizer = synthesizer
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
@@ -112,8 +168,10 @@ class LocalSleepEngine:
             if self._stop_event.is_set(): return
             time.sleep(1.0)
 
+        consecutive_failures = 0
+
         while not self._stop_event.is_set():
-            # Wait if paused
+            # Wait while paused
             while not self._pause_event.is_set():
                 if self._stop_event.is_set(): return
                 time.sleep(1.0)
@@ -123,11 +181,25 @@ class LocalSleepEngine:
                 self._last_run = time.time()
                 self._last_stats = stats
                 self._run_count += 1
+                consecutive_failures = 0
                 logger.debug(f"[NeuroSleepNet] Auto sleep complete: {stats}")
             except Exception as e:
-                logger.error(f"[NeuroSleepNet] Auto sleep error: {e}")
+                consecutive_failures += 1
+                # Exponential backoff: 30s, 60s, 120s, ... capped at 600s (10 min)
+                backoff = min(600, 30 * (2 ** (consecutive_failures - 1)))
+                logger.error(
+                    f"[NeuroSleepNet] Sleep cycle failed "
+                    f"(attempt {consecutive_failures}, retrying in {backoff}s): {e}",
+                    exc_info=True,
+                )
+                # Interruptible backoff sleep
+                back_deadline = time.monotonic() + backoff
+                while time.monotonic() < back_deadline:
+                    if self._stop_event.is_set(): return
+                    time.sleep(1.0)
+                continue  # retry without waiting full interval
 
-            # Sleep for interval, interruptible
+            # Normal interval sleep, interruptible
             deadline = time.monotonic() + self.interval_seconds
             while time.monotonic() < deadline:
                 if self._stop_event.is_set(): return
@@ -140,7 +212,7 @@ class LocalSleepEngine:
             stats = self.store.run_consolidation(project=self.project)
             
             # V2: Run one-off synthesis on exit if any high-consolidation clusters found
-            self._run_experimental_synthesis()
+            self._run_synthesis_pass()
             
             self._last_run = time.time()
             self._last_stats = stats
@@ -149,10 +221,10 @@ class LocalSleepEngine:
         except Exception as e:
             logger.error(f"[NeuroSleepNet] Exit consolidation failed: {e}")
 
-    def _run_experimental_synthesis(self):
+    def _run_synthesis_pass(self):
         """
-        V2: Find clusters of episodic memories and 'synthesize' them.
-        (Experimental: currently uses a template-based merge if no LLM provided).
+        V2: High-level synthesis pass. Finds clusters of episodic memories 
+        and prepares them for semantic merging.
         """
         try:
             from neurosleepnet import get_config
@@ -166,19 +238,73 @@ class LocalSleepEngine:
             if len(episodics) < 3:
                 return
 
-            # 2. Simple clustering (by first 3 words for now as a V2 preview)
-            clusters = {}
-            for m in episodics:
-                prefix = " ".join(m["content"].lower().split()[:3])
-                clusters.setdefault(prefix, []).append(m)
-            
-            for prefix, cluster in clusters.items():
-                if len(cluster) >= 3:
-                    logger.info(f"[NeuroSleepNet V2] Synthesizing cluster: {prefix}...")
-                    ids = [m["id"] for m in cluster]
-                    # In a full LLM impl, we'd call the LLM here.
-                    # For now, we use the most recent one as the 'representative' fact.
-                    master_content = cluster[0]["content"]
-                    self.store.merge_and_synthesize(self.project, ids, master_content)
+            clusters = self._cluster_memories(episodics)
+            self._synthesize_clusters(clusters)
         except Exception as e:
             logger.debug(f"[NeuroSleepNet V2] Synthesis skipped: {e}")
+
+    def _cluster_memories(self, memories: List[Dict]) -> Dict[str, List[Dict]]:
+        """
+        P1-1: Group memories by embedding cosine similarity (greedy centroid).
+        Threshold 0.78 — tighter than dedup (0.87) to allow thematic clusters.
+        Falls back to prefix grouping if embeddings are unavailable.
+        """
+        import numpy as np
+        clusters: List[List[Dict]] = []
+        centroids: List[np.ndarray] = []
+
+        for m in memories:
+            raw = self.store._get_embedding_blob(m["id"])
+            if not raw:
+                # No embedding — bucket by first-3-words as last resort
+                prefix = " ".join(m["content"].lower().split()[:3])
+                placed = False
+                for i, cluster in enumerate(clusters):
+                    if cluster[0].get("_prefix") == prefix:
+                        cluster.append(m)
+                        placed = True
+                        break
+                if not placed:
+                    m["_prefix"] = prefix
+                    clusters.append([m])
+                continue
+
+            emb = np.frombuffer(raw, dtype=np.float32)
+            n = np.linalg.norm(emb)
+            if n == 0:
+                continue
+            emb_norm = emb / n
+
+            placed = False
+            for i, centroid in enumerate(centroids):
+                if float(np.dot(emb_norm, centroid)) > 0.78:
+                    clusters[i].append(m)
+                    # Update centroid as running mean, re-normalise
+                    size = len(clusters[i])
+                    new_c = (centroid * (size - 1) + emb_norm) / size
+                    nc_norm = np.linalg.norm(new_c)
+                    centroids[i] = new_c / nc_norm if nc_norm > 0 else centroid
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([m])
+                centroids.append(emb_norm)
+
+        # Return as dict keyed by cluster index for compatibility
+        return {str(i): c for i, c in enumerate(clusters)}
+
+    def _synthesize_clusters(self, clusters):
+        """Perform the actual synthesis and merging of memory clusters."""
+        items = clusters.values() if isinstance(clusters, dict) else clusters
+        for cluster in items:
+            if len(cluster) >= 3:
+                ids = [m["id"] for m in cluster]
+                if self.synthesizer:
+                    try:
+                        master_content = self.synthesizer.synthesize(cluster)
+                    except Exception as e:
+                        logger.warning(f"[NeuroSleepNet V2] Synthesizer failed: {e}")
+                        master_content = _jaccard_synthesize(cluster)
+                else:
+                    master_content = _jaccard_synthesize(cluster)
+                self.store.merge_memories(self.project, ids, master_content)

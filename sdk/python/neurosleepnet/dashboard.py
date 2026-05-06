@@ -64,8 +64,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
     project: str = "default"
 
     def log_message(self, fmt, *args):
+        # P2-5: logger.debug is sufficient — remove print() that spammed every asset request
         logger.debug(f"[Dashboard] {fmt % args}")
-        print(f"[Dashboard] {fmt % args}")
 
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")

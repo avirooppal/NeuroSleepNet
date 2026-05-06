@@ -9,32 +9,81 @@ from typing import Any, Dict, List, Optional
 
 SAFETY_BUFFER_TOKENS = 256
 
-# Known context limits (tokens) per model family / name
+# Known context limits (tokens) per model family / name substring
 MODEL_CONTEXT_LIMITS: Dict[str, int] = {
-    "qwen-0.5b": 512, "qwen-1.5b": 512,
-    "tinyllama": 2048, "smollm": 2048, "smollm2": 2048,
-    "phi-2": 2048, "phi-3-mini": 4096,
-    "phi-3": 4096, "phi3": 4096,
-    "llama-3.2-1b": 4096, "llama-3.2-3b": 4096,
-    "mistral-7b": 8192, "mistral": 8192,
-    "llama-3.1-8b": 16384, "llama-3.1-70b": 16384,
-    "llama3": 8192, "llama-3": 8192,
-    "gemma": 8192, "gemma-2": 8192,
-    "qwen2": 32768, "qwen-2": 32768,
-    "stable-lm": 4096, "stablelm": 4096,
-    "gpt-4o": 128000, "gpt-4o-mini": 128000, "gpt-4-turbo": 128000,
-    "gpt-3.5-turbo": 16385,
-    "claude-3": 200000, "claude": 200000,
-    "gemini-1.5": 1000000, "gemini": 1000000,
+    # Long-context frontier
+    "gpt-4.1":            1_000_000,
+    "gemini-1.5":         1_000_000,
+    "gemini":             1_000_000,
+    "claude-3":             200_000,
+    "claude":               200_000,
+    "qwen2.5":              128_000,
+    "gpt-4o":               128_000,
+    "gpt-4-turbo":          128_000,
+    "mistral-small-3":      128_000,
+    "gemma-3":              128_000,
+    "deepseek-r1":           64_000,
+    "deepseek":              64_000,
+    # Strong LLMs
+    "gpt-4o-mini":           16_000,
+    "gpt-4":                  8_192,
+    "gpt-3.5-turbo":         16_385,
+    "phi-4":                 16_384,
+    "llama-3.1":             32_768,
+    "llama-3":                8_192,
+    "llama3":                 8_192,
+    "llama2":                 4_096,
+    "mistral-7b":             8_192,
+    "mistral":                8_192,
+    "mixtral":                8_192,
+    "qwen2":                 32_768,
+    "qwen-2":                32_768,
+    "gemma-2":                8_192,
+    "gemma":                  8_192,
+    # SLMs
+    "phi-3-mini":             4_096,
+    "phi-3":                  4_096,
+    "phi3":                   4_096,
+    "phi-2":                  2_048,
+    "phi-1":                  2_048,
+    "llama-3.2-3b":           4_096,
+    "llama-3.2-1b":           4_096,
+    "qwen-1.5b":                512,
+    "qwen-0.5b":                512,
+    "tinyllama":               2_048,
+    "smollm2":                 2_048,
+    "smollm":                  2_048,
+    "stable-lm":               4_096,
+    "stablelm":                4_096,
 }
 DEFAULT_CONTEXT_LIMIT = 4096
 
 
 def estimate_tokens(text: str) -> int:
-    return max(1, len(text) // 4)
+    """
+    P2-2: Token estimation with tiktoken when available.
+    Falls back to word-split * 1.3 (better than len//4 for code/CJK/emoji).
+    """
+    try:
+        import tiktoken
+        enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+    except Exception:
+        return max(1, int(len(text.split()) * 1.3))
 
 
 def get_model_context_limit(model_name: str) -> int:
+    """
+    P2-4: Look up context window for a model.
+    NSN_MODEL_LIMIT env var overrides all registry values.
+    """
+    import os
+    env_override = os.environ.get("NSN_MODEL_LIMIT")
+    if env_override:
+        try:
+            return int(env_override)
+        except ValueError:
+            pass
     if not model_name:
         return DEFAULT_CONTEXT_LIMIT
     name = model_name.lower()

@@ -63,11 +63,16 @@ def init_project(name: Optional[str]):
         print(f"[!] Could not register project with backend: {e}")
         project_id = name
 
+    # P2-7: Use stdlib datetime — avoids external HTTP call to worldtimeapi.org
+    # which breaks in air-gapped environments and is a privacy concern.
+    from datetime import datetime, timezone as _tz
+    initialized_at = datetime.now(_tz.utc).isoformat()
+
     config = {
         "project_name": name,
         "project_id": project_id,
         "api_key": "local_test_key",
-        "initialized_at": httpx.get("https://worldtimeapi.org/api/timezone/Etc/UTC").json()["datetime"] if check_connectivity() else "N/A"
+        "initialized_at": initialized_at,
     }
     save_project_config(config)
 
@@ -194,7 +199,9 @@ def manage_memories(action: str, query: Optional[str] = None, project: Optional[
         mems = store.search_text(query, project_id, limit=5)
         print(f"\n--- Search Results for '{query}' ---")
         for m in mems:
-            print(f"[{m['memory_type'].upper()}] (Score: {m['score']:.2f}) {m['content'][:80]}...")
+            # P2-3: search_text returns attention_score, not score
+            score = m.get("attention_score", m.get("score", 0.0))
+            print(f"[{m['memory_type'].upper()}] (Score: {score:.2f}) {m['content'][:80]}...")
     elif action == "forget":
         if user_id:
             count = store.forget_user(user_id, project_id)
