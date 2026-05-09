@@ -5,8 +5,11 @@ from redis.asyncio import Redis
 from app.config import settings
 from app.core.sleep_engine import run_sleep_cycle
 
-logging.basicConfig(level=logging.INFO)
+# Fix 5.1: Avoid global logging configuration; set specific logger levels
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 logger = logging.getLogger("stream_worker")
+logger.setLevel(logging.INFO)
 
 async def consume_stream():
     redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)

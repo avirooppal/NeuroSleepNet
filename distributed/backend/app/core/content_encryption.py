@@ -25,9 +25,11 @@ except ImportError:
         "Content will be stored unencrypted. Install with: pip install cryptography"
     )
 
-# Sentinel prefix so we can detect encrypted vs. plaintext records during migration
-_ENC_PREFIX = "nsn:enc:v1:"
-_NONCE_SIZE = 12   # 96-bit nonce for AES-GCM
+# Sentinel prefixes so we can detect encrypted vs. plaintext records during migration
+_ENC_PREFIX_V1 = "nsn:enc:v1:"
+_ENC_PREFIX_V2 = "nsn:enc:v2:"
+_SALT_SIZE = 16   # 128-bit salt for HKDF
+_NONCE_SIZE = 12  # 96-bit nonce for AES-GCM
 
 
 def _get_master_key() -> Optional[bytes]:
@@ -38,10 +40,11 @@ def _get_master_key() -> Optional[bytes]:
     return raw.encode("utf-8")
 
 
-def derive_key(tenant_id: str) -> bytes:
+def derive_key(tenant_id: str, salt: bytes) -> bytes:
     """
     Derive a 256-bit AES key for a specific tenant using HKDF.
-    Same master key + different tenant_id = completely different derived key.
+    Same master key + different tenant_id + different salt = completely different derived key.
+    Fix 1.5: salt is now cryptographically random per-encryption, not None.
     """
     master = _get_master_key()
     if not master or not _CRYPTO_AVAILABLE:
@@ -50,7 +53,7 @@ def derive_key(tenant_id: str) -> bytes:
     hkdf = HKDF(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=None,
+        salt=salt,
         info=f"nsn-tenant:{tenant_id}".encode("utf-8"),
     )
     return hkdf.derive(master)
@@ -61,37 +64,50 @@ def encrypt_content(content: str, tenant_id: str) -> str:
     Encrypt content string with AES-256-GCM.
     Returns a base64-encoded string with prefix so callers can detect encryption.
     Falls back to plaintext if crypto is unavailable (logs warning once).
+    Fix 1.5: Embeds a random HKDF salt in the payload (v2 format).
     """
     if not _CRYPTO_AVAILABLE or not _get_master_key():
         return content  # Graceful degradation — never crash the write path
 
-    key = derive_key(tenant_id)
+    salt = os.urandom(_SALT_SIZE)
+    key = derive_key(tenant_id, salt)
     nonce = os.urandom(_NONCE_SIZE)
     aesgcm = AESGCM(key)
     ciphertext = aesgcm.encrypt(nonce, content.encode("utf-8"), None)
 
-    # Pack nonce + ciphertext → base64 → prefix
-    packed = base64.b64encode(nonce + ciphertext).decode("utf-8")
-    return f"{_ENC_PREFIX}{packed}"
+    # Pack salt + nonce + ciphertext → base64 → v2 prefix
+    packed = base64.b64encode(salt + nonce + ciphertext).decode("utf-8")
+    return f"{_ENC_PREFIX_V2}{packed}"
 
 
 def decrypt_content(stored: str, tenant_id: str) -> str:
     """
     Decrypt a content string previously encrypted by encrypt_content().
-    If the string doesn't carry the encryption prefix (legacy plaintext record),
+    Supports v2 (salted HKDF) and v1 (salt=None legacy).
+    If the string doesn't carry an encryption prefix (legacy plaintext record),
     it is returned as-is — safe migration path.
     """
-    if not stored.startswith(_ENC_PREFIX):
+    if not stored.startswith(_ENC_PREFIX_V2) and not stored.startswith(_ENC_PREFIX_V1):
         return stored  # Plaintext legacy record — return unchanged
 
     if not _CRYPTO_AVAILABLE or not _get_master_key():
         logger.error("[NSN Crypto] Cannot decrypt — 'cryptography' package missing or no master key.")
         return "[DECRYPTION UNAVAILABLE]"
 
-    key = derive_key(tenant_id)
-    packed = base64.b64decode(stored[len(_ENC_PREFIX):])
-    nonce = packed[:_NONCE_SIZE]
-    ciphertext = packed[_NONCE_SIZE:]
+    if stored.startswith(_ENC_PREFIX_V2):
+        prefix_len = len(_ENC_PREFIX_V2)
+        packed = base64.b64decode(stored[prefix_len:])
+        salt = packed[:_SALT_SIZE]
+        nonce = packed[_SALT_SIZE:_SALT_SIZE + _NONCE_SIZE]
+        ciphertext = packed[_SALT_SIZE + _NONCE_SIZE:]
+        key = derive_key(tenant_id, salt)
+    else:
+        # v1 legacy: salt was None
+        prefix_len = len(_ENC_PREFIX_V1)
+        packed = base64.b64decode(stored[prefix_len:])
+        nonce = packed[:_NONCE_SIZE]
+        ciphertext = packed[_NONCE_SIZE:]
+        key = derive_key(tenant_id, b"")
 
     aesgcm = AESGCM(key)
     try:
@@ -104,4 +120,4 @@ def decrypt_content(stored: str, tenant_id: str) -> str:
 
 def is_encrypted(content: str) -> bool:
     """Returns True if content was encrypted by this module."""
-    return content.startswith(_ENC_PREFIX)
+    return content.startswith(_ENC_PREFIX_V2) or content.startswith(_ENC_PREFIX_V1)

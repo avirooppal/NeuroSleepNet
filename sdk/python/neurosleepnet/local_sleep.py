@@ -88,9 +88,12 @@ class LocalSleepEngine:
         self._last_stats: Dict[str, Any] = {}
         self._run_count = 0
         self._sleep_on_exit = sleep_on_exit
+        self._atexit_registered = False
 
         if sleep_on_exit:
-            atexit.register(self._on_exit)
+            self._atexit_ref = self._on_exit
+            atexit.register(self._atexit_ref)
+            self._atexit_registered = True
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
 
@@ -108,6 +111,10 @@ class LocalSleepEngine:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5.0)
+        # Fix 2.3: Unregister atexit handler so it doesn't fire on next init()
+        if self._atexit_registered and self._atexit_ref:
+            atexit.unregister(self._atexit_ref)
+            self._atexit_registered = False
 
     def pause(self):
         self._pause_event.clear()

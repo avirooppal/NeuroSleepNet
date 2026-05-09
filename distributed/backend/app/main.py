@@ -18,8 +18,11 @@ from .middleware.audit_log import AuditLogMiddleware
 from .middleware.auth import AuthenticationMiddleware
 from .utils.errors import NeuroSleepNetError
 
-logging.basicConfig(level=logging.INFO)
+# Fix 5.1: Avoid global logging configuration; set specific logger levels
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 # ── App lifespan — shared Redis pool ─────────────────────────────────────────
@@ -27,6 +30,16 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown: create and destroy shared Redis pool."""
+    # Fix 2.1: Validate encryption key before accepting traffic
+    settings.validate_encryption_key()
+
+    # Fix 1.6: Warn if anonymous access is enabled
+    if settings.ALLOW_ANONYMOUS_ACCESS:
+        logger.warning(
+            "[NSN] ALLOW_ANONYMOUS_ACCESS is enabled. "
+            "Anonymous users will be granted free-tier access. "
+            "Disable this in production."
+        )
     app.state.redis = Redis.from_url(
         str(settings.REDIS_URL),
         encoding="utf-8",
@@ -88,22 +101,27 @@ async def generic_exception_handler(request: Request, exc: Exception):
 
 # ── Fix 6: /health with real DB + Redis liveness checks ──────────────────────
 
-@app.get("/health", tags=["health"])
-async def health_check(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
+@app.get("/health")
+async def health():
+    """Simple liveness probe — always returns 200."""
+    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+
+
+@app.get("/health/deep")
+async def health_deep(request: Request):
     """
-    Liveness probe used by Docker, load-balancers, and Kubernetes.
-    Returns 200 when all critical services respond, 503 when degraded.
+    Deep health check: validates DB and Redis connectivity.
+    Returns 503 if any critical service is down.
     """
-    checks: dict = {}
+    checks = {}
     overall = "ok"
 
-    # Postgres
+    # Database — use shared session from deps
     try:
-        await db.execute(text("SELECT 1"))
-        checks["db"] = "ok"
+        async for db in get_db():
+            await db.execute("SELECT 1")
+            checks["db"] = "ok"
+            break
     except Exception as exc:
         checks["db"] = f"error: {str(exc)[:80]}"
         overall = "degraded"
@@ -115,6 +133,20 @@ async def health_check(
         checks["redis"] = "ok"
     except Exception as exc:
         checks["redis"] = f"error: {str(exc)[:80]}"
+        overall = "degraded"
+    
+    # Fix 5.2: Add embedding service health check
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{settings.EMBED_SERVICE_URL}/health")
+            if resp.status_code == 200:
+                checks["embed"] = "ok"
+            else:
+                checks["embed"] = f"error: HTTP {resp.status_code}"
+                overall = "degraded"
+    except Exception as exc:
+        checks["embed"] = f"error: {str(exc)[:80]}"
         overall = "degraded"
 
     http_status = 200 if overall == "ok" else 503

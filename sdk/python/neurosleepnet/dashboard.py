@@ -48,16 +48,28 @@ def push_event(event_type: str, data: Dict[str, Any]):
         pass  # Drop oldest — never block
 
 
-def _find_free_port(start: int = 3000) -> int:
-    for port in range(start, start + 20):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            try:
-                s.bind(("", port))
-                return port
-            except OSError:
-                continue
-    return start
+def _find_free_port(start_port: int) -> int:
+    """Find a free port starting from start_port."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("localhost", start_port))
+            return start_port
+        except OSError:
+            return _find_free_port(start_port + 1)
 
+def _find_free_port_excluding(start_port: int, exclude_ports: set) -> int:
+    """Find a free port starting from start_port, excluding specific ports."""
+    import socket
+    port = start_port
+    while port in exclude_ports:
+        port += 1
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("localhost", port))
+            return port
+        except OSError:
+            port += 1
 
 class DashboardHandler(BaseHTTPRequestHandler):
     db_path: str = ""
@@ -68,7 +80,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         logger.debug(f"[Dashboard] {fmt % args}")
 
     def _cors(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Fix 1.3: Restrict CORS to localhost dashboard origin only
+        self.send_header("Access-Control-Allow-Origin", f"http://localhost:{_server_port}")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -173,7 +186,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         
         # Look for frontend files inside the package
         base_dir = os.path.join(os.path.dirname(__file__), "frontend")
-        file_path = os.path.join(base_dir, path.lstrip("/"))
+        safe_base = os.path.realpath(base_dir)
+        requested = os.path.realpath(os.path.join(base_dir, path.lstrip("/")))
+
+        # Fix 1.2: Prevent path traversal (e.g., GET /../../etc/passwd)
+        if not requested.startswith(safe_base + os.sep) and requested != safe_base:
+            self.send_response(403)
+            self.end_headers()
+            return
+
+        file_path = requested
         
         if not os.path.exists(file_path):
             # Fallback to index.html for React Router
@@ -435,7 +457,9 @@ def start_local_server(db_path: str, project: str, port: int = 3000) -> int:
     if _server_thread and _server_thread.is_alive():
         return _server_port
 
-    actual_port = _find_free_port(port)
+    # Fix 5.3: Avoid port collision with backend (8000) and embedding service (8001)
+    exclude_ports = {8000, 8001}
+    actual_port = _find_free_port_excluding(port, exclude_ports)
     _server_port = actual_port
 
     # Inject config into handler class
@@ -488,7 +512,9 @@ def open_dashboard(project: str, port: int, open_browser: bool = True):
 
 def serve_dashboard_cli(db_path: str, project: str, port: int = 3000):
     """Start local dashboard HTTP server in foreground (blocking)."""
-    actual_port = _find_free_port(port)
+    # Fix 5.3: Avoid port collision with backend (8000) and embedding service (8001)
+    exclude_ports = {8000, 8001}
+    actual_port = _find_free_port_excluding(port, exclude_ports)
     
     # Inject config into handler class
     handler = type("Handler", (DashboardHandler,), {

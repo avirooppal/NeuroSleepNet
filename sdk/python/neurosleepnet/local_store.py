@@ -20,8 +20,14 @@ class LocalStore:
         self._init_db()
 
     def _conn(self):
+        # Fix 2.5: Enable WAL mode and longer busy_timeout to reduce write contention
         c = sqlite3.connect(self.db_path, timeout=30.0)
         c.row_factory = sqlite3.Row
+        cur = c.cursor()
+        cur.execute("PRAGMA journal_mode=WAL;")
+        cur.execute("PRAGMA synchronous=NORMAL;")
+        cur.execute("PRAGMA busy_timeout=30000;")  # 30 seconds
+        cur.close()
         return c
 
     def _add_column_if_missing(self, table: str, column: str, definition: str):
@@ -153,6 +159,8 @@ class LocalStore:
             c.execute("CREATE INDEX IF NOT EXISTS idx_mem_user ON memories(project, user_id, status)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_mem_proj ON memories(project, status)")
             c.execute("CREATE INDEX IF NOT EXISTS idx_mem_pinned ON memories(project, pinned, status)")
+            # Fix 3.2: Index to accelerate deduplication scan in store()
+            c.execute("CREATE INDEX IF NOT EXISTS idx_memories_project_status_pinned ON memories(project, status, pinned)")
             c.commit()
 
     # ── helpers ────────────────────────────────────────────────────────────────
@@ -450,15 +458,20 @@ class LocalStore:
             STOP = {"what","where","when","how","the","and","for","with","from","that","this"}
             tokens = [t.lower() for t in query.split() if len(t) > 3 and t.lower() not in STOP]
             if tokens:
-                fts_q = " OR ".join(tokens)
-                try:
-                    fts_rows = cur.execute(f"""
-                        SELECT m.id, bm25(memories_fts) as rank
-                        FROM memories_fts fts
-                        JOIN memories m ON m.rowid = fts.rowid
-                        WHERE memories_fts MATCH ? AND m.project=? AND m.status='active'
-                        {type_clause}
-                    """, [fts_q, project] + type_params).fetchall()
+                # Fix 4.5: Sanitize FTS5 query to prevent injection
+                clean_tokens = [t.replace('"', '""') for t in tokens if t.strip()]
+                if not clean_tokens:
+                    fts_rows = []
+                else:
+                    fts_q = " OR ".join(clean_tokens)
+                    try:
+                        fts_rows = cur.execute(f"""
+                            SELECT m.id, bm25(memories_fts) as rank
+                            FROM memories_fts fts
+                            JOIN memories m ON m.rowid = fts.rowid
+                            WHERE memories_fts MATCH ? AND m.project=? AND m.status='active'
+                            {type_clause}
+                        """, [fts_q, project] + type_params).fetchall()
                     for row in fts_rows:
                         results.setdefault(row["id"], {})["keyword_score"] = 1.0 / (1.0 + abs(row["rank"]))
                 except Exception:
@@ -610,12 +623,14 @@ class LocalStore:
         with self._conn() as c:
             user_clause = " AND (user_id=? OR user_id IS NULL)" if user_id else ""
             user_params = [user_id] if user_id else []
+            # Fix 4.5: Sanitize FTS5 query to prevent injection
+            clean_query = query.replace('"', '""')
             rows = c.execute(f"""
                 SELECT m.* FROM memories_fts fts
                 JOIN memories m ON m.rowid = fts.rowid
                 WHERE memories_fts MATCH ? AND m.project=? AND m.status='active'{user_clause}
                 LIMIT ?
-            """, [query, project] + user_params + [top_k]).fetchall()
+            """, [clean_query, project] + user_params + [top_k]).fetchall()
             out = []
             for row in rows:
                 d = dict(row)

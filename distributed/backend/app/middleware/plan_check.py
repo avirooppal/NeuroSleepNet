@@ -22,9 +22,20 @@ class PlanCheckMiddleware(BaseHTTPMiddleware):
             # Should already be authenticated by Auth middleware
             return await call_next(request)
 
-        # Enforce limits for specific mutating operations
-        # (Actually, usage decrementing/incrementing is handled in service layer, 
-        # so this is just a pre-check if needed).
-        # We'll rely on service layer check_and_inc_usage for accurate enforcement.
-        
+        # Fix 4.6: Enforce plan limits for mutating operations
+        # Check memory storage limits
+        if path.startswith("/api/v1/memories") and request.method in ["POST", "PUT"]:
+            async for db in get_db():
+                try:
+                    from ..services.usage_service import get_usage_stats
+                    stats = await get_usage_stats(db, user.id)
+                    # Simple limit: free users get 100 memories max
+                    if user.plan == "free" and stats.get("memories_stored", 0) >= 100:
+                        raise PlanLimitError("Free plan limit exceeded: maximum 100 memories")
+                finally:
+                    pass  # db session handled by get_db context manager
+
+        # Check other operation limits as needed
+        # Additional checks can be added here for other resources
+
         return await call_next(request)

@@ -7,6 +7,7 @@ These tasks are IO-bound against the fastembed sidecar (http://nsn-embed:8001).
 """
 import logging
 import os
+from typing import Optional
 
 import httpx
 
@@ -16,13 +17,21 @@ logger = logging.getLogger(__name__)
 
 EMBED_SERVICE_URL = os.environ.get("EMBED_SERVICE_URL", "http://nsn-embed:8001")
 
+# Fix 3.4: Use a module-level singleton HTTP client to avoid per-request overhead
+_http_client: Optional[httpx.Client] = None
+
+def _get_http_client() -> httpx.Client:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.Client(timeout=30.0)
+    return _http_client
 
 def _call_embed_service(texts: list[str]) -> list[list[float]]:
     """Call the fastembed sidecar and return embedding vectors."""
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.post(f"{EMBED_SERVICE_URL}/v1/embed", json={"texts": texts})
-        resp.raise_for_status()
-        return resp.json()["embeddings"]
+    client = _get_http_client()
+    resp = client.post(f"{EMBED_SERVICE_URL}/v1/embed", json={"texts": texts})
+    resp.raise_for_status()
+    return resp.json()["embeddings"]
 
 
 @celery_app.task(name="tasks.embed.generate", bind=True, max_retries=3, default_retry_delay=5)

@@ -69,8 +69,15 @@ class MemoryService:
         await session.refresh(memory)
 
         # Trigger Consolidation Async via Redis Streams
-        try:
+        # Fix 3.1: Use shared Redis client from app.state instead of creating per call
+        from fastapi import Request
+        from ..deps import get_db
+        # Note: this method is static; we expect to be called with request attached via middleware
+        redis = getattr(Request.state, "redis", None)
+        if not redis:
+            # Fallback: create one if not available (should not happen in normal flow)
             redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+        try:
             await redis.xadd(
                 "nsn_consolidation_stream",
                 {"project_id": str(project_id) if project_id else "global"}
@@ -117,10 +124,12 @@ class MemoryService:
         top_k: int = 5,
         min_attention_score: float = 0.3,
         dry_run: bool = False,
-        redis: Optional[Redis] = None
+        request_redis: Optional[Redis] = None
     ) -> List[dict]:
         query_embedding = await get_embedding(query)
         
+        # Fix 3.1: Use shared Redis client from request state if provided
+        redis = request_redis
         # 1. Get attention weights (with Redis cache)
         weights = None
         cache_key = f"nsn:project:{project_id}:settings"

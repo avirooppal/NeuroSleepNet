@@ -48,3 +48,47 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Development
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Documentation
+docs/_build/
+
+# Temporary
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Backup files
+*.bak
+*.backup
+
+# Package files
+*.whl
+*.tar.gz
+
+# IDE
+.vscode/settings.json
+.idea/workspace.xml
+
+# Testing
+.tox/
+coverage.xml
+
+# Security
+.env.local
+.env.production
+*.pem
+*.key
+.secrets/

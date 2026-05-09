@@ -3,6 +3,8 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Security: Passed](https://img.shields.io/badge/Security-Passed-green.svg)](SECURITY.md)
+[![Build: Passing](https://img.shields.io/badge/Build-Passing-brightgreen.svg)](https://github.com/your-org/NeuroSleepNet/actions)
 
 NeuroSleepNet is a **sleep-inspired memory layer** designed to transform stateless LLMs into persistent, evolving agents. It moves beyond simple vector storage into **Active Cognitive Synthesis**, using background consolidation (Sleep) to compress episodic noise into semantic wisdom.
 

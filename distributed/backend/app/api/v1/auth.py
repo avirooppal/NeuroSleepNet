@@ -45,7 +45,7 @@ async def get_current_user(
     Unified authentication: supports Bearer JWT and Bearer API Keys (nsn_sk_).
     """
     auth_header = request.headers.get("Authorization")
-    logger.info(f"Authenticating request. Header: {auth_header[:20] if auth_header else 'None'}...")
+    logger.debug(f"Authenticating request. Header: {auth_header[:20] if auth_header else 'None'}...")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
 
@@ -61,12 +61,19 @@ async def get_current_user(
             res = await db.execute(stmt)
             candidate = res.scalar_one_or_none()
 
-            if candidate and verify_api_key(token, candidate.key_hash):
-                candidate.last_used_at = datetime.now(timezone.utc)
-                await db.commit()
-                user_stmt = select(User).where(User.id == candidate.user_id)
-                user_res = await db.execute(user_stmt)
-                return user_res.scalar_one()
+            if candidate:
+                # Fix 1.4: Reject legacy SHA256 keys — force re-issue
+                if getattr(candidate, 'hash_version', 'v1') == 'v1':
+                    raise AuthenticationError(
+                        "API key uses legacy hashing and must be re-issued. "
+                        "Please generate a new key from your dashboard."
+                    )
+                if verify_api_key(token, candidate.key_hash):
+                    candidate.last_used_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    user_stmt = select(User).where(User.id == candidate.user_id)
+                    user_res = await db.execute(user_stmt)
+                    return user_res.scalar_one()
 
             raise AuthenticationError("Invalid or expired API Key.")
 
@@ -90,10 +97,11 @@ async def get_current_user(
         user = result.scalar_one_or_none()
         
         if not user:
+            # Fix 1.6: Anonymous users are capped at free tier — never pro
             user = User(
                 id=uuid.uuid4(),
                 email="anonymous@nsn.local",
-                plan="pro",
+                plan="free",
                 is_active=True
             )
             db.add(user)

@@ -19,7 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 # Paths that are always exempt from rate limiting
-_EXEMPT_PREFIXES = ("/health", "/docs", "/openapi.json", "/redoc")
+_EXEMPT_PREFIXES = ("/health", "/docs", "/openapi.json", "/redoc", "/api/v1/auth")
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):

@@ -288,32 +288,33 @@ class EmbeddingManager:
             return
         self._loaded = True
 
-        if self.requested_provider == "tfidf":
-            self._activate_tfidf()
-            return
-
-        # Try requested provider first, then cascade
-        start_idx = self.PROVIDER_ORDER.index(self.requested_provider) \
-            if self.requested_provider in self.PROVIDER_ORDER else 0
-
-        for provider in self.PROVIDER_ORDER[start_idx:]:
-            if provider == "local":
-                if self._try_load_local():
-                    self.active_provider = "local"
-                    return
-            elif provider == "openai":
-                if self._try_load_openai():
-                    self.active_provider = "openai"
-                    return
-            elif provider == "cohere":
-                if self._try_load_cohere():
-                    self.active_provider = "cohere"
-                    return
-            elif provider == "tfidf":
+        # Fix 3.3: Defer heavy model loading to background thread to avoid blocking init()
+        def _load_in_background():
+            if self.requested_provider == "tfidf":
                 self._activate_tfidf()
                 return
+            # Try requested provider first, then cascade
+            start_idx = self.PROVIDER_ORDER.index(self.requested_provider) \
+                if self.requested_provider in self.PROVIDER_ORDER else 0
+            for provider in self.PROVIDER_ORDER[start_idx:]:
+                if provider == "local":
+                    if self._try_load_local():
+                        self.active_provider = "local"
+                        return
+                elif provider == "openai":
+                    if self._try_load_openai():
+                        self.active_provider = "openai"
+                        return
+                elif provider == "cohere":
+                    if self._try_load_cohere():
+                        self.active_provider = "cohere"
+                        return
+                elif provider == "tfidf":
+                    self._activate_tfidf()
+                    return
+            self._activate_tfidf()
 
-        self._activate_tfidf()
+        threading.Thread(target=_load_in_background, daemon=True, name="NSN-EmbedLoader").start()
 
     # ── public API ────────────────────────────────────────────────────────────
 

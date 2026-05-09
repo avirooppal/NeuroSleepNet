@@ -1,7 +1,7 @@
 import os
 from typing import List
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     VERSION: str = "0.2.0"
 
     API_V1_STR: str = "/api/v1"
-    SECRET_KEY: str = "your_super_secret_key_here"
+    SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     ALLOW_ANONYMOUS_ACCESS: bool = False
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
 
     # ── Database ──────────────────────────────────────────────────────────────
     POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = "postgres"
+    POSTGRES_PASSWORD: str
     POSTGRES_DB: str = "neurosleepnet"
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/neurosleepnet"
 
@@ -80,6 +80,42 @@ class Settings(BaseSettings):
                 "Generate one with: python -c \"import secrets; print(secrets.token_hex(16))\"\n"
                 "Set this in your .env file."
             )
+
+    @model_validator(mode="after")
+    def check_no_placeholder_secrets(self):
+        """
+        Fix 1.1: Fail fast if SECRET_KEY or POSTGRES_PASSWORD uses a placeholder.
+        """
+        _FORBIDDEN_KEYS = {
+            "",
+            "your_super_secret_key_here",
+            "changeme",
+            "secret",
+            "your_key_here",
+            "default",
+        }
+        if self.SECRET_KEY in _FORBIDDEN_KEYS:
+            raise RuntimeError(
+                "SECRET_KEY is not set or uses a known placeholder. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+                "Set this in your .env file."
+            )
+
+        _FORBIDDEN_PASSWORDS = {
+            "",
+            "postgres",
+            "password",
+            "changeme",
+            "admin",
+            "123456",
+            "root",
+        }
+        if self.POSTGRES_PASSWORD in _FORBIDDEN_PASSWORDS:
+            raise RuntimeError(
+                "POSTGRES_PASSWORD is not set or uses a known placeholder. "
+                "Set a strong password in your .env file."
+            )
+        return self
 
 
 settings = Settings()

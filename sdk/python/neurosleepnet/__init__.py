@@ -12,6 +12,7 @@ Or equivalently:
 from __future__ import annotations
 
 import atexit
+import dataclasses
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ import threading
 import time
 import uuid as _uuid
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Generator, List, Optional, Union
 
@@ -50,6 +52,7 @@ from .context import (
     estimate_tokens,
     MODEL_FAMILY_TEMPLATES,
 )
+from .context_explicit import NSNContext, get_context, init_context, shutdown_context
 from .local_store import LocalStore
 from .local_sleep import LocalSleepEngine
 from .embeddings import EmbeddingManager
@@ -65,7 +68,9 @@ __all__ = [
     "list_memories", "search", "stats",
     "export", "import_memories", "merge_projects",
     "dashboard", "context", "get_embed",
+    "NSNResult", "NSNRecallError",
     "NSNAuthError", "NSNConnectionError", "NSNInitError",
+    "NSNContext", "get_context", "init_context", "shutdown_context",
 ]
 
 # ── Exceptions ─────────────────────────────────────────────────────────────────
@@ -73,22 +78,30 @@ __all__ = [
 class NSNAuthError(RuntimeError): pass
 class NSNConnectionError(RuntimeError): pass
 class NSNInitError(RuntimeError): pass
+class NSNRecallError(RuntimeError): pass
 
-# ── Global State ──────────────────────────────────────────────────────────────
 
-class NSNContext:
-    def __init__(self):
-        self.config: Dict[str, Any] = {}
-        self.local_store: Optional[LocalStore] = None
-        self.embed: Optional[EmbeddingManager] = None
-        self.sleep_engine: Optional[LocalSleepEngine] = None
-        self.last_recalled: List[Dict] = []
-        self.initialized = False
-        self.session_id = str(_uuid.uuid4())
-        self.lock = threading.Lock()
+@dataclasses.dataclass
+class NSNResult:
+    """
+    Fix 2.4: Lightweight result envelope for SDK operations.
+    Replaces silent None/[] returns on failure with structured error info.
+    """
+    ok: bool
+    value: Any = None
+    error: str = ""
+    error_code: str = ""  # e.g. "STORE_FAILED", "EMBED_FAILED", "RECALL_FAILED"
 
-_ctx = NSNContext()
-_logger = logging.getLogger("neurosleepnet")
+    def __bool__(self):
+        return self.ok
+
+
+# ── Context Management (Phase 6.1) ─────────────────────────────────────
+# Use explicit context instead of global singleton
+
+def _get_default_context() -> NSNContext:
+    """Get the default named context for backward compatibility."""
+    return get_context("default")
 
 
 # ── init() ─────────────────────────────────────────────────────────────────────
@@ -112,10 +125,17 @@ def init(
     synthesis_mode: bool = False,
 ):
     """Initialize NeuroSleepNet. Call once at startup."""
-    with _ctx.lock:
+    # Phase 6.1: Use explicit context instead of global singleton
+    ctx = _get_default_context()
+    
+    with ctx.lock:
+        # Fix 2.3: Shut down existing background resources before reinitializing
+        if ctx.initialized:
+            ctx.shutdown()
+
         log_level = logging.DEBUG if debug else logging.WARNING
         logging.basicConfig(level=log_level)
-        _logger.setLevel(log_level)
+        logger.setLevel(log_level)
 
         # Adaptive Default: Colab-aware data_dir
         if not data_dir:
@@ -130,7 +150,7 @@ def init(
             else:
                 data_dir = "~/.neurosleepnet"
 
-        _ctx.config = {
+        ctx.config.update({
             "project": project,
             "mode": mode,
             "host": host or "http://localhost:8080/api",
@@ -147,41 +167,48 @@ def init(
             "data_dir": data_dir,
             "embedding_model": embedding_model,
             "synthesis_mode": synthesis_mode,
-            "session_id": _ctx.session_id,
-        }
+            "session_id": ctx.session_id,
+        })
 
         if mode == "local":
-            _ctx.local_store = LocalStore(data_dir=data_dir)
-            _ctx.embed = EmbeddingManager(
+            ctx.local_store = LocalStore(data_dir=data_dir)
+            ctx.embed = EmbeddingManager(
                 provider=embed_model,
                 model_name=embedding_model,
                 api_key=api_key,
             )
-            _ctx.sleep_engine = LocalSleepEngine(
-                store=_ctx.local_store,
+            ctx.sleep_engine = LocalSleepEngine(
+                store=ctx.local_store,
                 project=project,
                 interval_seconds=float(sleep_interval),
                 sleep_on_exit=sleep_on_exit,
             )
-            _ctx.sleep_engine.start()
+            ctx.sleep_engine.start()
+
+            # Fix 2.2: Bounded thread pool for implicit feedback
+            if ctx._executor:
+                ctx._executor.shutdown(wait=False)
+            ctx._executor = ThreadPoolExecutor(
+                max_workers=4, thread_name_prefix="nsn-feedback"
+            )
             
             # Fix 5: Proactively trigger embedding load to detect issues at init time
             try:
-                _ctx.embed._ensure_loaded()
+                ctx.embed._ensure_loaded()
             except Exception as e:
-                _logger.warning(f"[NeuroSleepNet] Embedding engine warning: {e}")
+                logger.warning(f"[NeuroSleepNet] Embedding engine warning: {e}")
 
-            first_run = _ctx.local_store._is_first_run(project)
-            _ctx.local_store.mark_seen(project)
+            first_run = ctx.local_store._is_first_run(project)
+            ctx.local_store.mark_seen(project)
 
             # Start local dashboard server
-            db_path = _ctx.local_store.db_path
+            db_path = ctx.local_store.db_path
             dash_port = _dashboard_mod.start_local_server(db_path=db_path, project=project)
-            _ctx.config["dashboard_port"] = dash_port
+            ctx.config["dashboard_port"] = dash_port
             
             # Wire sleep trigger
-            if _ctx.sleep_engine:
-                _dashboard_mod.set_sleep_trigger(_ctx.sleep_engine.trigger_sleep)
+            if ctx.sleep_engine:
+                _dashboard_mod.set_sleep_trigger(ctx.sleep_engine.trigger_sleep)
 
             # Sync with CLI config for easy 'nsn dashboard' usage
             try:
@@ -196,16 +223,16 @@ def init(
         elif mode == "self-host":
             try:
                 from .client import NeuroSleepClient
-                _ctx.config["_client"] = NeuroSleepClient(
-                    base_url=_ctx.config["host"],
+                ctx.config["_client"] = NeuroSleepClient(
+                    base_url=ctx.config["host"],
                     api_key=api_key or "",
                 )
             except Exception as e:
-                raise NSNConnectionError(f"Could not connect to self-host at {_ctx.config['host']}: {e}")
+                raise NSNConnectionError(f"Could not connect to self-host at {ctx.config['host']}: {e}")
         else:
             raise ValueError(f"[NeuroSleepNet] Unknown mode '{mode}'. Use 'local' or 'self-host'.")
 
-        _ctx.initialized = True
+        ctx.initialized = True
 
 
 def _print_banner(project: str, embed_model: str, sleep_interval: int, sleep_on_exit: bool, dash_port: int = 3000):
@@ -223,14 +250,16 @@ def _print_banner(project: str, embed_model: str, sleep_interval: int, sleep_on_
 
 
 def _check_init():
-    if not _ctx.initialized:
+    ctx = _get_default_context()
+    if not ctx.initialized:
         raise NSNInitError("nsn.init() must be called before using NeuroSleepNet.")
 
 
 def _get_embedding(text: str) -> List[float]:
-    if _ctx.embed:
+    ctx = _get_default_context()
+    if ctx.embed:
         try:
-            return _ctx.embed.embed_single(text)
+            return ctx.embed.embed_single(text)
         except Exception:
             pass
     return []
@@ -245,21 +274,28 @@ def remember(
     importance: float = 1.0,
     tags: Optional[List[str]] = None,
     ttl_days: Optional[int] = None,
-) -> Optional[Dict]:
-    """Store a memory. Returns {id, status}."""
+) -> NSNResult:
+    """Store a memory. Returns NSNResult with memory dict on success."""
+    ctx = _get_default_context()
     _check_init()
-    if _ctx.config["mode"] == "local":
+    if ctx.config["mode"] == "local":
         try:
             emb = _get_embedding(content)
-            mid = _ctx.local_store.store(
+            if not emb:
+                return NSNResult(
+                    ok=False,
+                    error="Embedding generation failed; cannot store memory.",
+                    error_code="EMBED_FAILED"
+                )
+            mid = ctx.local_store.store(
                 content=content,
-                project=_ctx.config["project"],
+                project=ctx.config["project"],
                 user_id=user_id,
-                session_id=_ctx.config["session_id"],
+                session_id=ctx.config["session_id"],
                 tags=tags or [],
                 importance=importance,
                 memory_type=type,
-                embedding=emb if emb else None,
+                embedding=emb,
                 ttl_days=ttl_days,
             )
             result = {"id": mid, "status": "stored"}
@@ -267,14 +303,27 @@ def remember(
                 "id": mid, "content": content[:120], "type": type,
                 "user_id": user_id, "importance": importance,
             })
-            return result
+            return NSNResult(ok=True, value=result)
         except Exception as e:
-            _logger.warning(f"[NeuroSleepNet] remember() failed: {e}")
-            return None
+            logger.warning(f"[NeuroSleepNet] remember() failed: {e}")
+            return NSNResult(
+                ok=False,
+                error=str(e),
+                error_code="STORE_FAILED"
+            )
     else:
-        return _remote_call("store_memory", content=content, user_id=user_id,
-                            project=_ctx.config["project"],
-                            memory_type=type, importance=importance)
+        # Fix 2.4: Propagate remote errors instead of swallowing
+        try:
+            remote_val = _remote_call("store_memory", content=content, user_id=user_id,
+                                   project=ctx.config["project"],
+                                   memory_type=type, importance=importance)
+            return NSNResult(ok=True, value=remote_val)
+        except Exception as e:
+            return NSNResult(
+                ok=False,
+                error=str(e),
+                error_code="REMOTE_STORE_FAILED"
+            )
 
 
 # ── recall() ──────────────────────────────────────────────────────────────────
@@ -285,11 +334,10 @@ def recall(
     top_k: int = 5,
     memory_types: Optional[List[str]] = None,
     min_score: Optional[float] = None,
-) -> List[Dict]:
+) -> NSNResult:
     """
     Retrieve memories relevant to query.
-    Memories below recall_threshold are withheld and logged as misses.
-    Returns List[Memory] with .content, .score, .id, .type, .pinned
+    Returns NSNResult with list of memory dicts on success.
     """
     _check_init()
 
@@ -332,9 +380,8 @@ def recall(
                     user_id=user_id, top_k=top_k,
                 )
         except Exception as e:
-            _logger.warning(f"[NeuroSleepNet] recall() failed: {e}")
-            _ctx.last_recalled = []
-            return []
+            _logger.error(f"[NeuroSleepNet] recall() failed: {e}")
+            raise NSNRecallError(f"Recall failed: {e}") from e
 
         # Gate: split into hits and misses
         hits = []
@@ -368,17 +415,24 @@ def recall(
             "user_id": user_id,
             "top_score": _ctx.last_recalled[0].get("attention_score", 0.0) if _ctx.last_recalled else 0.0,
         })
-        return _ctx.last_recalled
+        return NSNResult(ok=True, value=_ctx.last_recalled)
     else:
         # Fix 11: pass min_score to the API so server applies gating where possible
-        result = _remote_call(
-            "retrieve",
-            query=query,
-            user_id=user_id,
-            project=_ctx.config["project"],
-            top_k=top_k * 3,  # fetch more so client-side gate can also filter
-            memory_types=memory_types,
-        )
+        try:
+            result = _remote_call(
+                "retrieve",
+                query=query,
+                user_id=user_id,
+                project=_ctx.config["project"],
+                top_k=top_k * 3,  # fetch more so client-side gate can also filter
+                memory_types=memory_types,
+            )
+        except Exception as e:
+            return NSNResult(
+                ok=False,
+                error=str(e),
+                error_code="REMOTE_RECALL_FAILED"
+            )
         # Flatten the {"memory": ..., "attention_score": ...} structure to match local mode
         flattened = []
         for item in (result or []):
@@ -416,7 +470,7 @@ def recall(
             "user_id": user_id,
             "top_score": _ctx.last_recalled[0].get("attention_score", 0.0) if _ctx.last_recalled else 0.0,
         })
-        return _ctx.last_recalled
+        return NSNResult(ok=True, value=_ctx.last_recalled)
 
 
 # ── forget() ──────────────────────────────────────────────────────────────────
@@ -711,12 +765,9 @@ def wrap(
     rec = get_recommended_settings(strength)
     
     # User config in init() takes precedence over adaptive defaults.
-    threshold = _ctx.config.get("recall_threshold")
-    if threshold is None:
-        threshold = rec["min_score"]
-    
-    top_k = rec["top_k"] # Can be expanded in future to support wrap(top_k=...)
-
+    threshold = _ctx.config.get("recall_threshold", rec["min_score"])
+    top_k = rec["top_k"]  # Can be expanded in future to support wrap(top_k=...)
+    implicit = _ctx.config.get("implicit_feedback", True)
     model_limit = get_model_context_limit(model_name)
 
     # Fix 3: detect model family from function/model name, fall back to init() config
@@ -724,10 +775,6 @@ def wrap(
         _detect_model_family(model_name)
         or _ctx.config.get("model_family", "generic")
     )
-
-    top_k = rec["top_k"]
-    threshold = _ctx.config.get("recall_threshold", rec["min_score"])
-    implicit = _ctx.config.get("implicit_feedback", True)
 
     def _extract_query(args, kwargs) -> str:
         """Pull the user query string from positional or keyword args."""
@@ -750,19 +797,16 @@ def wrap(
         # Old code called a dead remote endpoint in local mode — fixed to
         # dispatch directly to apply_implicit_feedback() from feedback.py.
         if implicit and _ctx.last_recalled and query:
-            if _ctx.config["mode"] == "local" and _ctx.local_store:
+            if _ctx.config["mode"] == "local" and _ctx.local_store and _ctx._executor:
                 from .feedback import apply_implicit_feedback as _apply_fb
-                import threading as _threading
-                _threading.Thread(
-                    target=_apply_fb,
-                    args=(
-                        _ctx.local_store,
-                        _ctx.config["project"],
-                        list(_ctx.last_recalled),
-                        query,
-                    ),
-                    daemon=True,
-                ).start()
+                # Fix 2.2: Use bounded executor instead of spawning a thread per call
+                _ctx._executor.submit(
+                    _apply_fb,
+                    _ctx.local_store,
+                    _ctx.config["project"],
+                    list(_ctx.last_recalled),
+                    query,
+                )
 
         # --- Current Recall ---
         memories = recall(query=query, user_id=_uid, top_k=top_k,

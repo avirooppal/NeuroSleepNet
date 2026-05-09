@@ -76,6 +76,7 @@ async def create_memory_batch(
             metadata=mem.metadata,
             importance=mem.importance,
             ttl_days=mem.ttl_days,
+            request_redis=redis,
         )
         created.append(res)
 
@@ -120,6 +121,7 @@ async def remember_important(
     project_id: Optional[str] = Body(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    redis: Redis = Depends(get_redis),
 ):
     """
     High-importance manual memory injection (maps to nsn.remember() in SDK).
@@ -134,6 +136,7 @@ async def remember_important(
         project_id=actual_project_id,
         tags=tags or ["manual-injection"],
         importance=importance,
+        request_redis=redis,
     )
     return res
 

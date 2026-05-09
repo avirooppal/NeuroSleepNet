@@ -34,7 +34,7 @@ export class NeuroSleepClient {
 
   constructor(
     apiKey: string,
-    baseUrl: string = "http://localhost:8001/api/v1"
+    baseUrl: string = "http://localhost:8000/api/v1"
   ) {
     this.client = axios.create({
       baseURL: baseUrl.replace(/\/$/, ""),

@@ -28,12 +28,20 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                     res = await db.execute(stmt)
                     candidate = res.scalar_one_or_none()
 
-                    if candidate and verify_api_key(token, candidate.key_hash):
-                        candidate.last_used_at = datetime.now(timezone.utc)
-                        await db.commit()
-                        user_stmt = select(User).where(User.id == candidate.user_id)
-                        user_res = await db.execute(user_stmt)
-                        request.state.user = user_res.scalar_one()
+                    if candidate:
+                        # Fix 1.4: Reject legacy SHA256 keys — force re-issue
+                        if getattr(candidate, 'hash_version', 'v1') == 'v1':
+                            from ..utils.errors import AuthenticationError
+                            raise AuthenticationError(
+                                "API key uses legacy hashing and must be re-issued. "
+                                "Please generate a new key from your dashboard."
+                            )
+                        if verify_api_key(token, candidate.key_hash):
+                            candidate.last_used_at = datetime.now(timezone.utc)
+                            await db.commit()
+                            user_stmt = select(User).where(User.id == candidate.user_id)
+                            user_res = await db.execute(user_stmt)
+                            request.state.user = user_res.scalar_one()
 
         # Fallback for anonymous access if enabled
         if not request.state.user and settings.ALLOW_ANONYMOUS_ACCESS:

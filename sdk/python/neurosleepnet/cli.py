@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import secrets
 import sys
 import webbrowser
 import httpx
@@ -10,6 +11,31 @@ from .dashboard import serve_dashboard_cli
 # Base URL for local backend
 BACKEND_URL = os.environ.get("NSN_BACKEND_URL", "http://localhost:8000/api/v1")
 DASHBOARD_URL = os.environ.get("NSN_DASHBOARD_URL", "http://localhost:8080")
+
+_CREDENTIALS_DIR = os.path.expanduser("~/.nsn")
+_CREDENTIALS_FILE = os.path.join(_CREDENTIALS_DIR, "credentials")
+
+
+def _get_local_api_key() -> str:
+    """
+    Return the persisted local API key, generating one on first use.
+    Fix 1.1: No hardcoded keys — random per-machine secret.
+    """
+    if os.path.exists(_CREDENTIALS_FILE):
+        with open(_CREDENTIALS_FILE, "r") as f:
+            data = json.load(f)
+        key = data.get("local_api_key")
+        if key:
+            return key
+
+    # Generate and persist
+    os.makedirs(_CREDENTIALS_DIR, mode=0o700, exist_ok=True)
+    new_key = "nsn_local_" + secrets.token_urlsafe(32)
+    with open(_CREDENTIALS_FILE, "w") as f:
+        json.dump({"local_api_key": new_key}, f, indent=2)
+    os.chmod(_CREDENTIALS_FILE, 0o600)
+    return new_key
+
 
 def get_project_config():
     """Reads local project config if exists."""
@@ -43,9 +69,9 @@ def init_project(name: Optional[str]):
         print("    Make sure to run 'docker compose up' to start the services.")
     
     # Try to create/get project from backend
+    local_api_key = _get_local_api_key()
     try:
-        # Note: We use a default local key for now
-        headers = {"Authorization": "Bearer local_test_key"}
+        headers = {"Authorization": f"Bearer {local_api_key}"}
         response = httpx.post(
             f"{BACKEND_URL}/projects/",
             json={"name": name},
@@ -71,7 +97,7 @@ def init_project(name: Optional[str]):
     config = {
         "project_name": name,
         "project_id": project_id,
-        "api_key": "local_test_key",
+        "api_key": local_api_key,
         "initialized_at": initialized_at,
     }
     save_project_config(config)
