@@ -1,6 +1,5 @@
 import httpx
-from typing import Any, Dict, List, Optional
-import os
+from typing import Any, Dict, List
 
 class NeuroSleepClient:
     def __init__(

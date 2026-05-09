@@ -172,7 +172,8 @@ class LocalSleepEngine:
         initial = min(60.0, self.interval_seconds * 0.1)
         deadline = time.monotonic() + initial
         while time.monotonic() < deadline:
-            if self._stop_event.is_set(): return
+            if self._stop_event.is_set():
+                return
             time.sleep(1.0)
 
         consecutive_failures = 0
@@ -180,7 +181,8 @@ class LocalSleepEngine:
         while not self._stop_event.is_set():
             # Wait while paused
             while not self._pause_event.is_set():
-                if self._stop_event.is_set(): return
+                if self._stop_event.is_set():
+                    return
                 time.sleep(1.0)
 
             try:
@@ -202,14 +204,16 @@ class LocalSleepEngine:
                 # Interruptible backoff sleep
                 back_deadline = time.monotonic() + backoff
                 while time.monotonic() < back_deadline:
-                    if self._stop_event.is_set(): return
+                    if self._stop_event.is_set():
+                        return
                     time.sleep(1.0)
                 continue  # retry without waiting full interval
 
             # Normal interval sleep, interruptible
             deadline = time.monotonic() + self.interval_seconds
             while time.monotonic() < deadline:
-                if self._stop_event.is_set(): return
+                if self._stop_event.is_set():
+                    return
                 time.sleep(1.0)
 
     def _on_exit(self):

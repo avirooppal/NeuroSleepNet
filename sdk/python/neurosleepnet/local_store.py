@@ -1,7 +1,12 @@
 """
 LocalStore — SQLite-backed persistent memory for NeuroSleepNet (Import Mode).
 """
-import json, logging, os, re, sqlite3, uuid
+import json
+import logging
+import os
+import re
+import sqlite3
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 import numpy as np
@@ -314,7 +319,8 @@ class LocalStore:
                     for row in rows:
                         m_emb = np.frombuffer(row["embedding"], dtype=np.float32)
                         mn = np.linalg.norm(m_emb)
-                        if mn == 0: continue
+                        if mn == 0:
+                            continue
                         sim = float(np.dot(q, m_emb / mn))
                         if sim > 0.88:
                             cur.execute("UPDATE memories SET status='deprecated', deprecated_by=? WHERE id=?", (mid, row["id"]))
@@ -346,7 +352,7 @@ class LocalStore:
             delta = now - created_at
             hours = max(0, delta.total_seconds() / 3600.0)
             return 1.0 / (1.0 + math.log(1 + hours))
-        except:
+        except Exception:
             return 0.5
 
     def _score_memory(self, similarity: float, recency: float, consolidation: float, 
@@ -404,7 +410,8 @@ class LocalStore:
         if use_dense:
             q_emb = np.array(query_embedding, dtype=np.float32)
             qn = np.linalg.norm(q_emb)
-            if qn > 0: q_emb = q_emb / qn
+            if qn > 0:
+                q_emb = q_emb / qn
         else:
             q_emb = None
             qn = 0.0
@@ -438,7 +445,7 @@ class LocalStore:
                 try:
                     p_settings = json.loads(settings_row[0])
                     weights = p_settings.get("attention_weights", weights)
-                except:
+                except Exception:
                     pass
 
             # 1. Pinned memories — always injected first

@@ -7,18 +7,12 @@ multiple times for different projects or configurations.
 
 from __future__ import annotations
 
-import atexit
 import dataclasses
-import json
 import logging
-import os
 import threading
-import time
 import uuid as _uuid
-import webbrowser
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Generator, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from .embeddings import EmbeddingManager
 from .local_sleep import LocalSleepEngine

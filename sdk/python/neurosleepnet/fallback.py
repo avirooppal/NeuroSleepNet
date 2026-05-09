@@ -21,7 +21,7 @@ def execute_with_fallback(
     try:
         # Normal execution
         return func(*args, **kwargs), False
-    except httpx.TimeoutException as e:
+    except httpx.TimeoutException:
         # Level 1: API Slow -> Use Local Cache
         if cache_retrieve_fn:
             logger.warning("NeuroSleepNet API timeout. Falling back to local cache.")
@@ -33,7 +33,7 @@ def execute_with_fallback(
                 if fallback_mode == "raise":
                     raise
         return None, False
-    except httpx.ConnectError as e:
+    except httpx.ConnectError:
         # Level 2: API Unreachable -> Skip memory injection
         logger.warning("NeuroSleepNet API unreachable. Skipping memory injection.")
         if fallback_mode == "raise":

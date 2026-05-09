@@ -2,7 +2,7 @@
 feedback.py — Explicit and implicit feedback engine for NeuroSleepNet.
 """
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 logger = logging.getLogger("neurosleepnet.feedback")
 

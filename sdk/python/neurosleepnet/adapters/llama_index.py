@@ -6,7 +6,7 @@ Detection: (hasattr(agent, 'query') or hasattr(agent, 'chat'))
 Wraps: agent.query() and agent.chat() — memory injected as system prompt prefix.
 """
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .base import AbstractAdapter
 from ..context import safe_inject, build_context, estimate_tokens

@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 import secrets
-import sys
 import webbrowser
 import httpx
 from typing import Optional
@@ -109,7 +108,7 @@ def init_project(name: Optional[str]):
     print(f"  Dashboard:    {DASHBOARD_URL}/dashboard/{project_id}")
     print("="*60)
     print("\nNext steps:")
-    print(f"  1. Ensure backend is running: nsn stack up")
+    print("  1. Ensure backend is running: nsn stack up")
     print(f"  2. In your code, use: nsn.init(project='{project_id}')")
     print("\nHappy coding!\n")
 
@@ -120,7 +119,7 @@ def show_status():
         print("[!] No NeuroSleepNet project found in this directory. Run 'nsn init' first.")
         return
 
-    print(f"NeuroSleepNet Project Status")
+    print("NeuroSleepNet Project Status")
     print("-" * 30)
     print(f"Name:       {config.get('project_name')}")
     print(f"ID:         {config.get('project_id')}")

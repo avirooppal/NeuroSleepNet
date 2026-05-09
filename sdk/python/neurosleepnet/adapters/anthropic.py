@@ -6,7 +6,6 @@ Wraps: agent.messages.create() — both sync and async variants
 Memory injected as a system prompt message prepended to the messages list.
 Streaming: async background buffer, never blocks the caller's stream.
 """
-import asyncio
 import logging
 import threading
 from typing import Any, Dict, List

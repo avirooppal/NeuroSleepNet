@@ -50,7 +50,6 @@ def push_event(event_type: str, data: Dict[str, Any]):
 
 def _find_free_port(start_port: int) -> int:
     """Find a free port starting from start_port."""
-    import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.bind(("localhost", start_port))
@@ -60,7 +59,6 @@ def _find_free_port(start_port: int) -> int:
 
 def _find_free_port_excluding(start_port: int, exclude_ports: set) -> int:
     """Find a free port starting from start_port, excluding specific ports."""
-    import socket
     port = start_port
     while port in exclude_ports:
         port += 1
@@ -383,7 +381,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     [project] + user_params + [limit]
                 ).fetchall()
                 return [dict(r) for r in rows]
-        except Exception as e:
+        except Exception:
             return []
 
     def _get_pins(self, project: str, user_id: Optional[str]) -> List[Dict]:
@@ -396,7 +394,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     [project] + user_params
                 ).fetchall()
                 return [dict(r) for r in rows]
-        except Exception as e:
+        except Exception:
             return []
 
     def _get_misses(self, project: str, limit: int) -> List[Dict]:
@@ -407,7 +405,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     (project, limit)
                 ).fetchall()
                 return [dict(r) for r in rows]
-        except Exception as e:
+        except Exception:
             return []
 
     def _get_all_projects(self) -> List[str]:
@@ -426,7 +424,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     (project, limit)
                 ).fetchall()
                 return [dict(r) for r in rows]
-        except Exception as e:
+        except Exception:
             return []
 
     def _delete_memory(self, memory_id: str, project: str):
@@ -494,10 +492,9 @@ def open_dashboard(project: str, port: int, open_browser: bool = True):
 
     if is_colab:
         try:
-            from google.colab.output import proxy_port
             url = f"https://localhost:{port}/p/{proj_slug}"
             print(f"[NeuroSleepNet] Dashboard (Colab) → {url}")
-            print(f"[NeuroSleepNet] Note: Use the 'proxy_port' helper if the link doesn't open.")
+            print("[NeuroSleepNet] Note: Use the 'proxy_port' helper if the link doesn't open.")
         except Exception:
             url = f"http://localhost:{port}/p/{proj_slug}"
             print(f"[NeuroSleepNet] Dashboard → {url}")

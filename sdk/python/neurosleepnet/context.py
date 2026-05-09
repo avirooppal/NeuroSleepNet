@@ -5,7 +5,7 @@ nsn.context() builds a memory injection string tuned to each model family's
 known attention patterns. A Phi-3 model reads the top of the context window
 best; a Mistral/Llama model benefits from structured XML in the system turn.
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 SAFETY_BUFFER_TOKENS = 256
 

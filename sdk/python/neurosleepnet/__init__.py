@@ -239,13 +239,13 @@ def _print_banner(project: str, embed_model: str, sleep_interval: int, sleep_on_
     pid = project[:8] if len(project) >= 8 else project
     print()
     print(f"[NeuroSleepNet] Initializing project: {project}")
-    print(f"[NeuroSleepNet] Mode: local (SQLite, in-process)")
+    print("[NeuroSleepNet] Mode: local (SQLite, in-process)")
     print(f"[NeuroSleepNet] Sleep Engine: active (cycle: {sleep_interval}s, sleep_on_exit: {'enabled' if sleep_on_exit else 'disabled'})")
     print(f"[NeuroSleepNet] Embed model: {embed_model}")
     print(f"[NeuroSleepNet] {'─' * 45}")
     print(f"[NeuroSleepNet] Dashboard live → http://localhost:{dash_port}/p/{pid}")
     print(f"[NeuroSleepNet] {'─' * 45}")
-    print(f"[NeuroSleepNet] Ready. 0 memories | 0 users | 0 sleep cycles")
+    print("[NeuroSleepNet] Ready. 0 memories | 0 users | 0 sleep cycles")
     print()
 
 

@@ -1,7 +1,6 @@
 import json
 from typing import Dict, Any, List
 from datetime import datetime
-import os
 
 class ReportGenerator:
     def __init__(self, run_id: str, model: str, results: List[Dict[str, Any]], reproduce_cmd: str = ""):
