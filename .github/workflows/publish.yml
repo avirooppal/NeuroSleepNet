@@ -31,10 +31,9 @@ jobs:
 
     - name: Build distributions
       run: |
-        cd sdk/python
         uv build
-
+    
     - name: Publish distributions to PyPI
       uses: pypa/gh-action-pypi-publish@v1.12.4
       with:
-        packages-dir: sdk/python/dist/
+        packages-dir: dist/
