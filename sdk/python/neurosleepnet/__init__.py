@@ -20,13 +20,14 @@ import threading
 import time
 import uuid as _uuid
 import webbrowser
+from collections.abc import Generator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Generator, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 # ── Model family detection ─────────────────────────────────────────────────────
 
-_MODEL_FAMILY_MAP: Dict[str, str] = {
+_MODEL_FAMILY_MAP: dict[str, str] = {
     "phi":     "phi3",
     "mistral": "mistral",
     "gemma":   "gemma",

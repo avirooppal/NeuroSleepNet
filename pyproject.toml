@@ -69,7 +69,7 @@ dev = [
 line-length = 88
 target-version = "py39"
 select = ["E", "W", "F", "I", "B", "C4", "UP"]
-ignore = [
+lint.ignore = [
     "E501",  # line too long, handled by black
     "B008",  # do not perform function calls in argument defaults
     "F821",  # undefined name - allow for adapter files
@@ -77,6 +77,9 @@ ignore = [
     "F401",  # imported but unused - allow for conditional imports
     "E701",  # multiple statements on one line - allow for compact code
     "E722",  # bare except - allow for simple error handling
+    "UP035",  # import from collections.abc instead of Generator
+    "UP037",  # typing.Dict is deprecated
+    "UP006",  # use dict instead of Dict for type annotations
 ]
 exclude = [
     ".git",
