@@ -472,10 +472,10 @@ class LocalStore:
                             WHERE memories_fts MATCH ? AND m.project=? AND m.status='active'
                             {type_clause}
                         """, [fts_q, project] + type_params).fetchall()
-                    for row in fts_rows:
-                        results.setdefault(row["id"], {})["keyword_score"] = 1.0 / (1.0 + abs(row["rank"]))
-                except Exception:
-                    pass
+                        for row in fts_rows:
+                            results.setdefault(row["id"], {})["keyword_score"] = 1.0 / (1.0 + abs(row["rank"]))
+                    except Exception:
+                        pass
 
             # 3a. Dense semantic signal via ANN cache (P0-1)
             #     Query the in-memory matrix — no full-table embedding scan.

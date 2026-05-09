@@ -215,7 +215,32 @@ class NSNContext:
             )
 
 
+# Global context registry for backward compatibility
+_contexts: Dict[str, NSNContext] = {}
+
+def get_context(name: str = "default") -> NSNContext:
+    """Get or create a named context."""
+    if name not in _contexts:
+        _contexts[name] = NSNContext()
+    return _contexts[name]
+
+def init_context(name: str = "default", **kwargs) -> NSNContext:
+    """Initialize a named context with configuration."""
+    if name not in _contexts:
+        _contexts[name] = NSNContext()
+    _contexts[name].init(**kwargs)
+    return _contexts[name]
+
+def shutdown_context(name: str = "default") -> None:
+    """Shutdown a named context."""
+    if name in _contexts:
+        _contexts[name].shutdown()
+        del _contexts[name]
+
 # Export the new explicit context
 __all__ = [
     "NSNContext",
+    "get_context",
+    "init_context", 
+    "shutdown_context",
 ]
