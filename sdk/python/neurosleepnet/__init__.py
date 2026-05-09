@@ -759,7 +759,7 @@ def context(
     threshold = min_score if min_score is not None else (_ctx.config.get("recall_threshold") or 0.6)
     memories = recall(query=query, user_id=user_id, top_k=20, min_score=threshold)
     return build_context(
-        memories=memories,
+        memories=memories.value if hasattr(memories, "value") else memories,
         query=query,
         max_tokens=max_tokens,
         model_family=_family,
@@ -832,14 +832,15 @@ def wrap(
                     _apply_fb,
                     _ctx.local_store,
                     _ctx.config["project"],
-                    list(_ctx.last_recalled),
+                    list(_ctx.last_recalled.value if hasattr(_ctx.last_recalled, "value") else _ctx.last_recalled),
                     query,
                 )
 
         # --- Current Recall ---
         memories = recall(query=query, user_id=_uid, top_k=top_k,
                           memory_types=memory_types, min_score=threshold)
-        _ctx.last_recalled = memories
+        # Fix: recall() already sets _ctx.last_recalled to the list. 
+        # Don't overwrite it with the NSNResult object.
 
         if not memories:
             return args, kwargs
@@ -853,7 +854,7 @@ def wrap(
         injection_budget = min(available_budget, _ctx.config.get("memory_window", 4096) // 2)
 
         ctx_str = build_context(
-            memories=memories,
+            memories=memories.value if hasattr(memories, "value") else memories,
             query=query,
             max_tokens=injection_budget,
             model_family=_wrap_family,   # Fix 3: use detected family, not hardcoded "generic"
@@ -975,7 +976,7 @@ def wrap(
         _store_interaction(query, resp_str, active_user_id)
 
         _prev_query["query"] = query
-        _prev_query["memories"] = list(_ctx.last_recalled)
+        _prev_query["memories"] = list(_ctx.last_recalled.value if hasattr(_ctx.last_recalled, "value") else _ctx.last_recalled)
 
         return response
 

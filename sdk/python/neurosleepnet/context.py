@@ -210,6 +210,9 @@ def build_context(
     Build a memory injection string for a given model family.
     Pins are always injected first. Non-pinned memories fill remaining budget.
     """
+    if hasattr(memories, "value"):
+        memories = memories.value  # type: ignore
+
     if not memories:
         return ""
 
