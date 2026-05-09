@@ -29,4 +29,8 @@ def verify_api_key(provided: str, stored_hash: str) -> bool:
     """
     Fix 1.4: Use passlib verify instead of raw SHA256 comparison.
     """
-    return pwd_context.verify(provided, stored_hash)
+    try:
+        return pwd_context.verify(provided, stored_hash)
+    except ValueError:
+        # passlib raises ValueError (or UnknownHashError) if hash format is invalid
+        return False

@@ -21,8 +21,7 @@ async def test_anonymous_user_created_with_free_plan(monkeypatch):
     # First call: no anonymous user exists → should create one with plan="free"
     mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-    with pytest.raises(Exception):  # get_current_user will try DB ops; we just verify the branch
-        await get_current_user(mock_request, db=mock_db)
+    await get_current_user(mock_request, db=mock_db)
 
     # Check that add() was called with a user whose plan is 'free'
     calls = mock_db.add.call_args_list

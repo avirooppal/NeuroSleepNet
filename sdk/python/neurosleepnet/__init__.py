@@ -61,6 +61,10 @@ from .embeddings import EmbeddingManager
 from .feedback import apply_implicit_feedback
 from . import dashboard as _dashboard_mod
 
+# Global context and logger for backward compatibility
+_ctx: NSNContext = None  # type: ignore
+_logger = logging.getLogger("neurosleepnet")
+
 __all__ = [
     "init", "wrap", "remember", "recall",
     "forget", "forget_user", "forget_project",
@@ -137,7 +141,7 @@ def init(
 
         log_level = logging.DEBUG if debug else logging.WARNING
         logging.basicConfig(level=log_level)
-        logger.setLevel(log_level)
+        _logger.setLevel(log_level)
 
         # Adaptive Default: Colab-aware data_dir
         if not data_dir:
@@ -204,13 +208,17 @@ def init(
             ctx.local_store.mark_seen(project)
 
             # Start local dashboard server
-            db_path = ctx.local_store.db_path
-            dash_port = _dashboard_mod.start_local_server(db_path=db_path, project=project)
-            ctx.config["dashboard_port"] = dash_port
-            
-            # Wire sleep trigger
-            if ctx.sleep_engine:
-                _dashboard_mod.set_sleep_trigger(ctx.sleep_engine.trigger_sleep)
+            dash_port = 0
+            if os.getenv("NSN_NO_DASHBOARD") != "1":
+                db_path = ctx.local_store.db_path
+                dash_port = _dashboard_mod.start_local_server(db_path=db_path, project=project)
+                ctx.config["dashboard_port"] = dash_port
+                
+                # Wire sleep trigger
+                if ctx.sleep_engine:
+                    _dashboard_mod.set_sleep_trigger(ctx.sleep_engine.trigger_sleep)
+            else:
+                ctx.config["dashboard_port"] = 0
 
             # Sync with CLI config for easy 'nsn dashboard' usage
             try:
@@ -235,6 +243,24 @@ def init(
             raise ValueError(f"[NeuroSleepNet] Unknown mode '{mode}'. Use 'local' or 'self-host'.")
 
         ctx.initialized = True
+        
+        # Update global context for backward compatibility
+        global _ctx
+        _ctx = ctx
+
+
+def stop():
+    """Stop all background resources (sleep engine, dashboard, executors)."""
+    ctx = _get_default_context()
+    if ctx.sleep_engine:
+        ctx.sleep_engine.stop()
+    
+    _dashboard_mod.stop_local_server()
+    
+    if ctx._executor:
+        ctx._executor.shutdown(wait=False)
+    
+    ctx.initialized = False
 
 
 def _print_banner(project: str, embed_model: str, sleep_interval: int, sleep_on_exit: bool, dash_port: int = 3000):
@@ -244,9 +270,9 @@ def _print_banner(project: str, embed_model: str, sleep_interval: int, sleep_on_
     print("[NeuroSleepNet] Mode: local (SQLite, in-process)")
     print(f"[NeuroSleepNet] Sleep Engine: active (cycle: {sleep_interval}s, sleep_on_exit: {'enabled' if sleep_on_exit else 'disabled'})")
     print(f"[NeuroSleepNet] Embed model: {embed_model}")
-    print(f"[NeuroSleepNet] {'─' * 45}")
-    print(f"[NeuroSleepNet] Dashboard live → http://localhost:{dash_port}/p/{pid}")
-    print(f"[NeuroSleepNet] {'─' * 45}")
+    print(f"[NeuroSleepNet] {'-' * 45}")
+    print(f"[NeuroSleepNet] Dashboard live -> http://localhost:{dash_port}/p/{pid}")
+    print(f"[NeuroSleepNet] {'-' * 45}")
     print("[NeuroSleepNet] Ready. 0 memories | 0 users | 0 sleep cycles")
     print()
 

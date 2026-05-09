@@ -452,7 +452,10 @@ def start_local_server(db_path: str, project: str, port: int = 3000) -> int:
     """Start local dashboard HTTP server in a background daemon thread. Returns port."""
     global _server_instance, _server_port, _server_thread
 
-    if _server_thread and _server_thread.is_alive():
+    if _server_thread and _server_thread.is_alive() and _server_instance:
+        # Update existing handler with new paths
+        _server_instance.RequestHandlerClass.db_path = db_path
+        _server_instance.RequestHandlerClass.project = project
         return _server_port
 
     # Fix 5.3: Avoid port collision with backend (8000) and embedding service (8001)
@@ -471,11 +474,26 @@ def start_local_server(db_path: str, project: str, port: int = 3000) -> int:
 
     def _run():
         logger.debug(f"[NeuroSleepNet] Local dashboard server running on :{actual_port}")
-        server.serve_forever()
+        try:
+            server.serve_forever()
+        except Exception:
+            pass
 
     _server_thread = threading.Thread(target=_run, daemon=True, name="NSN-Dashboard")
     _server_thread.start()
     return actual_port
+
+
+def stop_local_server():
+    """Stop the local dashboard server if running."""
+    global _server_instance, _server_thread
+    if _server_instance:
+        _server_instance.shutdown()
+        _server_instance.server_close()
+        _server_instance = None
+    if _server_thread:
+        _server_thread.join(timeout=2.0)
+        _server_thread = None
 
 
 def open_dashboard(project: str, port: int, open_browser: bool = True):

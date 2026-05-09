@@ -38,6 +38,7 @@ from neurosleepnet import (  # explicit re-exports for IDE autocomplete
     context,
     get_embed,
     get_config,
+    stop,
     NSNAuthError,
     NSNConnectionError,
     NSNInitError,

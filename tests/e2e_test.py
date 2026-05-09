@@ -19,6 +19,8 @@ def test_env():
     
     yield {"project": project_name, "data_dir": data_dir}
     
+    # Teardown
+    nsn.stop()
     if os.path.exists(data_dir):
         shutil.rmtree(data_dir)
 
@@ -39,7 +41,7 @@ def test_memory_lifecycle(test_env):
     nsn.remember("My favorite color is dark blue.", user_id=test_user)
     
     # Recall
-    results = nsn.recall("What do I love programming in?", user_id=test_user)
+    results = nsn.recall("What do I love programming in?", user_id=test_user).value
     assert any("Python" in r['content'] for r in results)
     
     # Sleep/Consolidation
