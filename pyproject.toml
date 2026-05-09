@@ -64,3 +64,25 @@ Changelog = "https://github.com/your-org/NeuroSleepNet/blob/main/CHANGELOG.md"
 dev = [
     "pytest>=8.0.0",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+select = ["E", "W", "F", "I", "B", "C4", "UP"]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "F821",  # undefined name - allow for adapter files
+    "F841",  # unused variable - allow for dashboard variables
+    "F401",  # imported but unused - allow for conditional imports
+    "E701",  # multiple statements on one line - allow for compact code
+    "E722",  # bare except - allow for simple error handling
+]
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+]
