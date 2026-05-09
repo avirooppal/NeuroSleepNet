@@ -1,0 +1,259 @@
+{
+  "timestamp": "2026-05-09T21:30:40.563710",
+  "model": "gpt2",
+  "baseline": {
+    "average_score": 0.0,
+    "per_turn_results": [
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "React",
+          "TypeScript",
+          "Vite"
+        ],
+        "response_length": 212
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Zustand",
+          "Context",
+          "Redux"
+        ],
+        "response_length": 158
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "fetch",
+          "axios",
+          "React Query"
+        ],
+        "response_length": 158
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Jest",
+          "React Testing Library",
+          "Cypress"
+        ],
+        "response_length": 163
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Prettier",
+          "ESLint",
+          "pre-commit"
+        ],
+        "response_length": 164
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "React",
+          "TypeScript",
+          "Vite"
+        ],
+        "response_length": 204
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Zustand",
+          "Context",
+          "Redux"
+        ],
+        "response_length": 204
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "fetch",
+          "axios",
+          "React Query"
+        ],
+        "response_length": 204
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "GitHub Actions",
+          "Vercel",
+          "Docker"
+        ],
+        "response_length": 204
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Jest",
+          "React Testing Library"
+        ],
+        "response_length": 204
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "JSDoc",
+          "Storybook",
+          "README"
+        ],
+        "response_length": 204
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "React",
+          "TypeScript",
+          "Vite",
+          "testing",
+          "deployment"
+        ],
+        "response_length": 204
+      }
+    ]
+  },
+  "nsn": {
+    "average_score": 0.016666666666666666,
+    "per_turn_results": [
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "React",
+          "TypeScript",
+          "Vite"
+        ],
+        "response_length": 452
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Zustand",
+          "Context",
+          "Redux"
+        ],
+        "response_length": 446
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "fetch",
+          "axios",
+          "React Query"
+        ],
+        "response_length": 467
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Jest",
+          "React Testing Library",
+          "Cypress"
+        ],
+        "response_length": 459
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Prettier",
+          "ESLint",
+          "pre-commit"
+        ],
+        "response_length": 477
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "React",
+          "TypeScript",
+          "Vite"
+        ],
+        "response_length": 454
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Zustand",
+          "Context",
+          "Redux"
+        ],
+        "response_length": 446
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "fetch",
+          "axios",
+          "React Query"
+        ],
+        "response_length": 479
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "GitHub Actions",
+          "Vercel",
+          "Docker"
+        ],
+        "response_length": 427
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "Jest",
+          "React Testing Library"
+        ],
+        "response_length": 274
+      },
+      {
+        "recall_rate": 0.0,
+        "keywords_found": [],
+        "keywords_expected": [
+          "JSDoc",
+          "Storybook",
+          "README"
+        ],
+        "response_length": 569
+      },
+      {
+        "recall_rate": 0.2,
+        "keywords_found": [
+          "React"
+        ],
+        "keywords_expected": [
+          "React",
+          "TypeScript",
+          "Vite",
+          "testing",
+          "deployment"
+        ],
+        "response_length": 454
+      }
+    ]
+  },
+  "improvement": 0.016666666666666666
+}
