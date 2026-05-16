@@ -869,6 +869,16 @@ def wrap(
         if not ctx_str:
             return args, kwargs
 
+        import re
+        def _strip_old_context(text: str) -> str:
+            # Purge XML/Plain/Markdown historical injection artifacts securely
+            text = re.sub(r'<memory_context>.*?</memory_context>\s*', '', text, flags=re.DOTALL)
+            text = re.sub(r'<context>.*?</context>\s*', '', text, flags=re.DOTALL)
+            text = re.sub(r'\[MEMORY CONTEXT START\].*?\[MEMORY CONTEXT END\]\s*', '', text, flags=re.DOTALL)
+            text = re.sub(r'(?:## Recalled Memory Context|### USER MEMORY & CONTEXT|### Memory Context|SYSTEM: Use the following memory context).*?(?:---|### END OF CONTEXT)\s*', '', text, flags=re.DOTALL)
+            text = re.sub(r'IMPORTANT: PREVIOUS CONTEXT FROM LONG-TERM MEMORY.*?\n\n', '', text, flags=re.DOTALL)
+            return text.strip()
+
         # Inject into messages or prompt
         messages = kwargs.get("messages") or (args[0] if args and isinstance(args[0], list) else None)
         if messages and isinstance(messages, list):
@@ -881,7 +891,7 @@ def wrap(
                 if sys_idx is not None:
                     new_messages[sys_idx] = {
                         **new_messages[sys_idx],
-                        "content": ctx_str + "\n\n" + new_messages[sys_idx]["content"],
+                        "content": ctx_str + "\n\n" + _strip_old_context(new_messages[sys_idx]["content"]),
                     }
                 else:
                     new_messages.insert(0, {"role": "system", "content": ctx_str})
@@ -891,7 +901,7 @@ def wrap(
                 if user_idx is not None:
                     new_messages[user_idx] = {
                         **new_messages[user_idx],
-                        "content": ctx_str + "\n\n" + new_messages[user_idx]["content"],
+                        "content": ctx_str + "\n\n" + _strip_old_context(new_messages[user_idx]["content"]),
                     }
                 else:
                     new_messages.insert(0, {"role": "user", "content": ctx_str})
@@ -901,7 +911,8 @@ def wrap(
             return new_args, kwargs
         else:
             prompt = kwargs.get("prompt") or (args[0] if args and isinstance(args[0], str) else "")
-            augmented = ctx_str + "\n\n" + prompt
+            clean_prompt = _strip_old_context(prompt)
+            augmented = ctx_str + "\n\n" + clean_prompt
             if "prompt" in kwargs:
                 return args, {**kwargs, "prompt": augmented}
             new_args = (augmented,) + (args[1:] if args else ())
@@ -938,9 +949,12 @@ def wrap(
         streaming_wrapper.__nsn__ = True    # type: ignore
         return streaming_wrapper
 
-    _prev_query: Dict[str, Any] = {}  # closure state for implicit feedback
+    _thread_local = threading.local()
 
     def wrapped(*args, **kwargs) -> Any:
+        if not hasattr(_thread_local, "prev_query"):
+            _thread_local.prev_query = {}
+        _prev_query = _thread_local.prev_query
         # Fix 12: Zero-config auto-init
         if not _ctx.initialized:
             _logger.info("[NeuroSleepNet] wrap() called before init(). Using smart defaults.")
@@ -975,6 +989,9 @@ def wrap(
         resp_str = str(response) if not isinstance(response, str) else response
         _store_interaction(query, resp_str, active_user_id)
 
+        # Note: _prev_query is intentionally assigned as a direct dictionary reference
+        # mapping to the thread-local storage (_thread_local.prev_query). Consequently,
+        # these item mutations safely update thread-local storage directly across turns.
         _prev_query["query"] = query
         _prev_query["memories"] = list(_ctx.last_recalled.value if hasattr(_ctx.last_recalled, "value") else _ctx.last_recalled)
 

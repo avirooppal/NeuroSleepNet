@@ -22,8 +22,11 @@ logger = logging.getLogger("neurosleepnet.sleep")
 # ── Jaccard-dedup sentence synthesizer (P1-2) ─────────────────────────────────
 
 def _jaccard(a: str, b: str) -> float:
-    """Jaccard similarity on word sets."""
-    wa, wb = set(a.lower().split()), set(b.lower().split())
+    """Jaccard similarity on word sets, stripping trailing punctuation cleanly."""
+    import re
+    def _toks(s):
+        return set(re.findall(r'\b\w+\b', s.lower()))
+    wa, wb = _toks(a), _toks(b)
     if not wa or not wb:
         return 0.0
     return len(wa & wb) / len(wa | wb)
@@ -31,34 +34,36 @@ def _jaccard(a: str, b: str) -> float:
 
 def _jaccard_synthesize(cluster: List[Dict], max_sentences: int = 3) -> str:
     """
-    P1-2: Real fallback synthesis using Jaccard-dedup sentence concatenation.
+    V2 Hardened: Temporally-Aware Reverse-Chronological Topic Extraction.
 
     Algorithm:
-    1. Split every memory into sentences (split on . ! ?).
-    2. Sort sentences by length descending (longer = more informative).
-    3. Greedily select sentences where Jaccard vs all already-selected < 0.5.
-    4. Take up to max_sentences.
-    5. Join with space.
-
-    This produces a genuine multi-fact summary without requiring an LLM,
-    replacing the old 'longest content wins' selection.
+    1. Sort memories descending by created_at timestamp (most recent first).
+    2. Extract sentences from each memory, preserving their temporal epoch rank.
+    3. Greedily accept sentences starting from the newest records.
+    4. When evaluating an older candidate sentence, compute token Jaccard overlap
+       against all already-selected newer sentences. If overlap exceeds 0.55,
+       the older statement is classified as superseded/contradictory and pruned.
+    5. This resolves direct linear shifts (FastAPI -> Django) while preserving
+       compound complementary traits sharing framing vocabulary.
     """
     import re
-    all_sentences: List[str] = []
-    for m in cluster:
+    sorted_cluster = sorted(cluster, key=lambda m: m.get("created_at", ""), reverse=True)
+    
+    selected: List[str] = []
+    for m in sorted_cluster:
         raw = m.get("content", "").strip()
         parts = re.split(r'(?<=[.!?])\s+', raw)
-        all_sentences.extend([s.strip() for s in parts if len(s.strip()) > 10])
-
-    if not all_sentences:
-        return cluster[0]["content"]
-
-    # Longer sentences carry more information — prefer them
-    candidates = sorted(all_sentences, key=len, reverse=True)
-    selected: List[str] = []
-    for candidate in candidates:
-        if all(_jaccard(candidate, s) < 0.5 for s in selected):
-            selected.append(candidate)
+        for s in parts:
+            s_clean = s.strip()
+            if len(s_clean) <= 10:
+                continue
+            # Check overlap against selected newer sentences
+            if any(_jaccard(s_clean, existing) > 0.55 for existing in selected):
+                # Classified as superseded / contradictory
+                continue
+            selected.append(s_clean)
+            if len(selected) >= max_sentences:
+                break
         if len(selected) >= max_sentences:
             break
 
@@ -66,10 +71,64 @@ def _jaccard_synthesize(cluster: List[Dict], max_sentences: int = 3) -> str:
 
 
 class Synthesizer(ABC):
+    """
+    Abstract interface contract defining cognitive memory consolidation adapters.
+    
+    Contract constraints:
+    - Input: A list of memory dictionaries containing at minimum 'content' and 'created_at' keys.
+    - Output: Must return a plain consolidated text string.
+    - Resilience: Subclasses may raise exceptions upon adapter failure to trigger
+      explicit warnings and automatic routing to the hardened local fallback heuristics.
+    
+    Known Architectural Limitation:
+    - Unverifiable Narratives: If a user introduces an incorrect factual state in the most recent turn,
+      unsupervised consolidation automatically promotes the latest string as terminal truth.
+      Correcting false terminal inputs requires explicit nsn.recall() auditing or programmatic nsn.forget() drops.
+    """
     @abstractmethod
     def synthesize(self, memories: List[Dict]) -> str:
         """Synthesize multiple memories into a single semantic fact."""
         pass
+
+
+class ContradictionSynthesizer(Synthesizer):
+    """
+    Production-grade reference implementation for automated narrative contradiction resolution.
+    Accepts a custom callable or standard completion routing adapter.
+    """
+    def __init__(self, client_adapter: Optional[Any] = None):
+        self.client_adapter = client_adapter
+
+    def synthesize(self, memories: List[Dict]) -> str:
+        """
+        Resolves factual shifts using an abstractive reasoning pass.
+        Expects memories sorted reverse-chronologically by default.
+        """
+        if not memories:
+            return ""
+        sorted_mems = sorted(memories, key=lambda m: m.get("created_at", ""), reverse=True)
+        
+        if self.client_adapter and hasattr(self.client_adapter, "generate"):
+            prompt = (
+                "You are an expert logical memory consolidator. Analyze the following sequence of facts "
+                "recorded over time for a singular subject, ordered from most recent to oldest. "
+                "Identify the terminal factual state. If an older statement contradicts a newer one, "
+                "completely suppress the older statement. Preserve distinct but complementary compound attributes.\n\n"
+                "Facts:\n"
+            )
+            for i, m in enumerate(sorted_mems, 1):
+                prompt += f"[{i}] (Recorded: {m.get('created_at', 'unknown')}): {m.get('content', '')}\n"
+            prompt += "\nOutput purely the singular, consolidated factual truth as a concise string."
+            
+            try:
+                res = self.client_adapter.generate(prompt)
+                if res and isinstance(res, str):
+                    return res.strip()
+            except Exception as e:
+                logger.warning(f"[NeuroSleepNet V2] ContradictionSynthesizer adapter exception: {e}. Discarding adapter.")
+                raise
+
+        return _jaccard_synthesize(sorted_mems)
 
 
 class LocalSleepEngine:

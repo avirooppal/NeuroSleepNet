@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -20,6 +21,7 @@ class LocalStore:
         self.data_dir = os.path.expanduser(data_dir)
         os.makedirs(self.data_dir, exist_ok=True)
         self.db_path = os.path.join(self.data_dir, "neurosleepnet.db")
+        self._cache_lock = threading.RLock()
         # Per-project ANN caches — populated lazily on first retrieve() call
         self._caches: Dict[str, EmbeddingCache] = {}
         self._init_db()
@@ -172,11 +174,16 @@ class LocalStore:
 
     def _get_cache(self, project: str) -> EmbeddingCache:
         """Return (and lazily warm) the per-project ANN cache."""
-        if project not in self._caches:
-            cache = EmbeddingCache()
-            self._warm_cache(project, cache)
-            self._caches[project] = cache
-        return self._caches[project]
+        with self._cache_lock:
+            if project not in self._caches:
+                cache = EmbeddingCache()
+                self._warm_cache(project, cache)
+                self._caches[project] = cache
+            else:
+                cache = self._caches[project]
+                if cache._matrix is None:
+                    self._warm_cache(project, cache)
+            return cache
 
     def _warm_cache(self, project: str, cache: EmbeddingCache):
         """Populate cache from existing DB rows on first access."""
@@ -336,8 +343,9 @@ class LocalStore:
             c.commit()
 
         # Update ANN cache incrementally (if cache already warmed for this project)
-        if embedding and project in self._caches:
-            self._caches[project].add(mid, embedding)
+        with self._cache_lock:
+            if embedding and project in self._caches:
+                self._caches[project].add(mid, embedding)
 
         return mid
 
@@ -1000,8 +1008,9 @@ class LocalStore:
             c.commit()
 
         # Invalidate ANN cache for this project so next recall() re-warms cleanly
-        if project and project in self._caches:
-            del self._caches[project]
+        with self._cache_lock:
+            if project and project in self._caches:
+                self._caches[project].invalidate()
 
         return stats
 
@@ -1072,8 +1081,9 @@ class LocalStore:
             c.commit()
 
         # Invalidate ANN cache — master node must be visible on next recall()
-        if project in self._caches:
-            del self._caches[project]
+        with self._cache_lock:
+            if project in self._caches:
+                self._caches[project].invalidate()
 
         return mid
 

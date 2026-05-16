@@ -5,6 +5,8 @@ from neurosleepnet.adapters.langchain import LangChainAdapter
 
 # Mock objects
 class MockLangChainAgent:
+    __module__ = "langchain.agents"
+
     def invoke(self, input_text, config=None, **kwargs):
         return f"Invoked: {input_text}"
         

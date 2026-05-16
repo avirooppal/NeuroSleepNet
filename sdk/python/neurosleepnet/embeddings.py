@@ -113,6 +113,13 @@ class EmbeddingCache:
         with self._lock:
             return (len(self._ids) + len(self._pending))
 
+    def invalidate(self):
+        """Safely clear the matrix and pending buffer under lock."""
+        with self._lock:
+            self._matrix = None
+            self._ids = []
+            self._pending = []
+
 
 # ── TF-IDF implementation (zero-dependency) ────────────────────────────────────
 
